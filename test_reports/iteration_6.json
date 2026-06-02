@@ -1,0 +1,43 @@
+{
+  "summary": "Iter-6 e2e for major auth pivot (email/password only with hardcoded doctor routing), follow-up multi-language (hi/te/ta), POST /api/tts (OpenAI tts-1 via Emergent key), and reminder ownership regression. Backend: 16/16 pytest passed in test_iter6_auth_tts_lang.py. Frontend (Playwright on REACT_APP_BACKEND_URL): /login renders ONLY signin/signup tabs (no Google/demo, confirmed); patient signup with random email → /portal with portal-followup-cta + portal-reminders-cta visible; patient /followup goes straight to chat (no chooser), language-selector + language-select + tts-toggle-btn + mic-btn all render on Chromium; selecting Hindi and sending an English message returns assistant bubble in Devanagari script with urgency pill (MEDIUM); patient sidebar hides nav-alerts and shows nav-followup + nav-reminders. Doctor signup with idrlapt@gmail.com returns 409 (already registered, expected) → signin works → redirected to / (NOT /portal). Doctor sidebar shows nav-alerts, nav-followup, nav-reminders; dashboard-alerts-banner present; /followup chooser shows 29 patient tiles; doctor chat view hides mic-btn but keeps language-selector + tts-toggle-btn; /alerts page shows 3 open alerts with alert-resolve-* buttons (incl. one Hindi alert and one English emergency from QA Patient).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter6_auth_tts_lang.py",
+    "/app/test_reports/pytest/iter6_results.xml"
+  ],
+  "action_items": [
+    "(LOW, carryover from iter-5) Replace window.confirm in Reminders.jsx delete() with shadcn AlertDialog for testability and aesthetic consistency.",
+    "(LOW, carryover) Split server.py (now 1788 lines) into routers/auth.py, routers/followup.py, routers/reminders.py, routers/patients.py, services/llm.py — exceeds the 700-line guideline.",
+    "(LOW, carryover) PATCH /api/followup/alerts/{id} accepts any value for `status` — should whitelist 'open'|'acknowledged'|'resolved'.",
+    "(INFO) /api/tts works but loads OpenAITextToSpeech client per request (line 1620 server.py). Consider hoisting to module-level singleton to avoid TLS handshake overhead per call."
+  ],
+  "critical_code_review_comments": [
+    "server.py grew from 1706 → 1788 lines; still single-file. Splitting into routers/services strongly recommended.",
+    "POST /api/tts catches all exceptions and returns 502 with the full exception message in `detail` — could leak internal error info (provider keys, traces). Consider sanitising the detail string for prod.",
+    "TTS endpoint instantiates OpenAITextToSpeech(api_key=...) on every call; a module-level singleton would be cheaper.",
+    "_followup_llm_call streams full prior chat history each turn (capped at to_list(200)). For long conversations this bloats prompt and cost. Consider trimming to last ~20 turns.",
+    "Hindi/Telugu LLM replies sometimes leak the urgency word (e.g., 'MEDIUM') into the cleaned text — investigation showed this is actually the urgency pill rendered inside the assistant bubble (not text leakage). No action needed.",
+    "FollowupChat.jsx hides mic-btn for doctors and when SpeechRecognition is unavailable — verified renders correctly on Chromium for patient role only."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter6_auth_tts_lang.py"
+  ],
+  "success_rate": {
+    "backend": "100% (16/16 pytest in test_iter6_auth_tts_lang.py)",
+    "frontend": "100% — all 11 frontend assertions in the review request passed (login tabs, patient signup→portal+CTAs, patient /followup language/tts/mic/sidebar, doctor signup/signin→/, doctor sidebar+banner+chooser+chat-no-mic, /alerts list)."
+  },
+  "test_credentials": "Doctor: idrlapt@gmail.com / DrLahari! (login). Patients: ephemeral qa+<uuid>@projectcare.app / Passw0rd! created via /api/auth/register during tests.",
+  "seed_data_creation": "Created multiple ephemeral patients via register (linked patient records auto-created). Created and deleted TEST_OwnershipCheck and TEST_DoctorFlow reminders. Created Hindi and English follow-up chats which generated 1 EMERGENCY alert (QA Patient, 'worst headache') and 1 HIGH alert (Hindi Patient, 'मुझे सिरदर्द हो रहा है'). These alerts remain OPEN in /alerts unless resolved by main agent.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Run: `pytest /app/backend/tests/test_iter6_auth_tts_lang.py -v --junitxml=/app/test_reports/pytest/iter6_results.xml`. Key new testids: tts-toggle-btn, mic-btn, language-selector, language-select. Login page now has ONLY tab-signin and tab-signup (NO tab-demo, NO Google button). Doctor email is hardcoded to idrlapt@gmail.com — first run register, all subsequent must login. Patient register auto-creates a patient record with the user.linked_patient_id; patients hit /followup go directly to /followup/<linked_patient_id> chat (no chooser). Doctor /followup shows chooser. mic-btn renders only when window.SpeechRecognition exists AND user.role==='patient'. /api/tts requires Authorization (401 without), returns audio/mpeg, ~12-30KB for short text. /api/followup/message accepts language ∈ {en, hi, te, ta} and returns reply in that script while urgency triage stays in English. Reminder ownership: patient gets 403 on cross-patient create/taken/delete; doctor can do all three.",
+  "rca_of_the_issue": "N/A — no failures or regressions observed this iteration."
+}

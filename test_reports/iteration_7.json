@@ -1,0 +1,46 @@
+{
+  "summary": "Iter-7 e2e for WhatsApp voice-note pipeline + critical regression. Backend pytest suite test_voice_iter7_regression.py: 21 passed, 2 skipped (idrlapt password mismatch falls back to /api/auth/demo-doctor; /api/care-ai/* 404 in this build). Frontend Playwright on REACT_APP_BACKEND_URL: doctor /followup/<wa-linked-pid> renders 4 'Voice note' chips (data-testid=msg-source-voice), 34 'WhatsApp' chips (data-testid=msg-source-whatsapp), 4 'Original audio' links (data-testid=voice-original-link) pointing at /api/whatsapp/media/voice-*.mp3. Patient /portal Connect WhatsApp section shows voice-note copy + 🎙 emoji and the modal exposes whatsapp-modal, whatsapp-number-input, whatsapp-lang-select, whatsapp-send-code-btn data-testids.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/auth/login", "issue": "idrlapt@gmail.com / DrLahari! credentials in /app/memory/test_credentials.md no longer authenticate (401 invalid credentials). /api/auth/register says 'already registered'. Tests fall back to /api/auth/demo-doctor which still works. Recommend resetting Dr Lahari password or updating credentials.md."},
+      {"endpoint": "/api/care-ai/start", "issue": "Endpoint returns 404 (route not exposed in current build). Care AI intake regression skipped — was listed in checklist."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_voice_iter7_regression.py",
+    "/app/test_reports/pytest/iter7_results.xml"
+  ],
+  "action_items": [
+    "(MED) Restore idrlapt@gmail.com password to DrLahari! OR update /app/memory/test_credentials.md to the new value — current docs are stale; a fresh tester running the standard login will be blocked.",
+    "(LOW) /api/care-ai/start returns 404. Either remove from regression checklist or wire the route. test was skipped.",
+    "(LOW carryover) whatsapp_router.py `_extract_voice_note` only loops over the first audio attachment but iterates `range(num_media)` — if a non-audio attachment appears at index 0 alongside an audio at index 1 the loop proceeds; minor, current behaviour acceptable but worth documenting.",
+    "(LOW) Public /api/whatsapp/media/{id}.mp3 has no expiry enforcement — `expires_at` is set on the row at insert but never checked on serve_media. Twilio caches anyway, but stale rows remain reachable forever.",
+    "(LOW) `_maybe_send_tts_reply` stores raw audio_b64 base64 strings in MongoDB. Each TTS reply is ~30-80KB; consider GridFS or filesystem-backed cache for scale."
+  ],
+  "critical_code_review_comments": [
+    "whatsapp_router.py is 467 lines and single-responsibility — OK to keep as one file.",
+    "Twilio Basic Auth is correctly applied in _download_twilio_media (only place that needs it). Public /media endpoint correctly bypasses auth so Twilio can fetch the outbound TTS reply.",
+    "asyncio.create_task on _maybe_send_tts_reply is fire-and-forget without an exception sink beyond the inner try/except — fine for now but consider `add_done_callback` to log unhandled cancellations.",
+    "FollowupChat.jsx correctly hides 'Original audio' link for patient role (privacy: patient already heard it). Voice + WhatsApp chips render with the requested data-testids.",
+    "Backend test_credentials.md indicates DrLahari! but live login returns 401. Likely stale doc OR password rotated by a recent migration. Either way the regression checklist depends on it — needs resync."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_voice_iter7_regression.py"
+  ],
+  "success_rate": {
+    "backend": "21/23 = 91.3% (2 skipped: idrlapt auth + care-ai 404; 0 failures)",
+    "frontend": "100% — all requested chips, links and data-testids verified on /followup and /portal"
+  },
+  "test_credentials": "Doctor (working): /api/auth/demo-doctor (no body). idrlapt@gmail.com / DrLahari! is BROKEN (401). Patient: demo45a880e1@projectcare.app / DemoPass1! (linked WhatsApp +91 9100336792). Note: the +91 9100336792 user record actually links to drgapt@gmail.com → patient_id 9ea3d292-8322-46a5-a5f9-f43b630cd5fc, NOT the demo patient — this is the patient with all the voice/whatsapp test rows.",
+  "seed_data_creation": "Inserted 1 ephemeral whatsapp_media row per E2E run (cleaned in finally). Live webhook E2E inserted 2 followup_chats rows (1 voice 'user' + 1 'assistant' reply) for patient 9ea3d292-8322-46a5-a5f9-f43b630cd5fc and 0-1 doctor_alerts rows depending on triage urgency.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Run: `pytest /app/backend/tests/test_voice_iter7_regression.py -v --junitxml=/app/test_reports/pytest/iter7_results.xml`. Voice pipeline: TTS-generate audio → seed db.whatsapp_media row → POST /api/whatsapp/webhook with MediaUrl0 = `${BASE}/api/whatsapp/media/{id}.mp3` → live webhook downloads via Twilio Basic Auth (extra header is harmless against our preview URL) → Whisper transcribes → followup_llm_call replies → row written with media_type='voice'+transcript. The +91 9100336792 sandbox number is linked to drgapt@gmail.com (patient_id 9ea3d292-...), not the demo45a880e1 patient. Frontend chips (data-testid=msg-source-voice / msg-source-whatsapp / voice-original-link) only appear when the patient_id has those rows — use 9ea3d292-8322-46a5-a5f9-f43b630cd5fc to verify rendering. ConnectWhatsApp modal data-testids: whatsapp-modal, whatsapp-number-input, whatsapp-lang-select, whatsapp-send-code-btn, whatsapp-modal-close, whatsapp-cta, wa-nudge-banner, wa-nudge-cta, portal-whatsapp-section.",
+  "rca_of_the_issue": "The only real anomaly is the idrlapt@gmail.com/DrLahari! login failure. /api/auth/register returns 'Email already registered' so the user exists; /api/auth/login returns 401. Either the password hash was overwritten (e.g. by a re-seed script or another test) or the documented password is wrong. The legacy /api/auth/demo-doctor still issues a doctor-role token, so this does not block regression. Action: main agent should reset the password via a /scripts/reset_doctor_password.py-style helper or update /app/memory/test_credentials.md."
+}

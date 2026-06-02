@@ -1,0 +1,47 @@
+{
+  "summary": "Batch 1 (Project Care UX) end-to-end verification. Backend pytest (test_batch1_e2e.py): 10/11 passed — 1 failure: GET /api/doctors?department=<unknown> returns Dr Lahari instead of an empty list (fallback clause overrides the filter, contradicts the spec). Frontend Playwright on REACT_APP_BACKEND_URL: registered fresh patient via Sign-up tab → /portal renders 'Consult a Doctor' on both data-testid='consult-now-btn' AND data-testid='portal-empty-consult-btn'. Modal flow visually confirmed: Step 1 (step-department, dept-general) → Step 2 (step-doctor) renders EXACTLY ONE doctor card with 'Dr lahari', 'General Physician', '12+ yrs', '⭐ 4.9', and bio → Step 3 (step-slot) with date input + 13-slot grid → Step 4 (step-reason) with reason textarea + consult-submit-btn. Earlier iteration_7 issue 'idrlapt login = 401' is RESOLVED — DrLahari! credential now authenticates as expected. ConsultationSession.jsx + FollowupChat.jsx data-testids (consult-composer, consult-readonly-notice, doctor-join-btn, consult-mic-btn, followup-mic-btn) all present in source — verified via static review.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "GET /api/doctors?department=<unknown>",
+        "issue": "Returns Dr Lahari instead of empty doctors array. server.py list_doctors() has a fallback `if not out: out.append(_doctor_card(...))` that ignores the department filter and always returns the canonical doctor. Should return {doctors: []} when the department filter excludes everyone."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_batch1_e2e.py",
+    "/app/backend/tests/test_batch1_doctors.py",
+    "/app/test_reports/pytest/batch1_e2e_results.xml"
+  ],
+  "action_items": [
+    "(LOW) Fix list_doctors fallback so unknown department → empty list. In /app/backend/server.py around line 833: only run the `if not out` fallback when the caller did NOT pass a `department` filter. Suggested: `if not out and not department: ...`.",
+    "(NICE-TO-HAVE) Doctor name is stored as 'Dr lahari' (lowercase l). Tests pass case-insensitive, but the canonical display name should be 'Dr. Lahari' for polish."
+  ],
+  "critical_code_review_comments": [
+    "ConsultNowModal.jsx exposes all the requested data-testids (consult-modal, step-department, step-doctor, step-slot, step-reason, consult-back-btn, consult-next-btn, consult-submit-btn, doctor-card-{id}, slot-{HH:MM}, dept-{id}, consult-date-input, consult-reason-input, consult-modal-close, consult-type-toggle, consult-type-{k}). Good test surface.",
+    "ConsultationSession.jsx canType policy correctly implemented at L385: `(intake && patient) || live`. awaiting_doctor branch falls through to consult-readonly-notice. doctor-join-btn is correctly disabled while session.status === 'intake' with a tooltip 'Wait for patient to finish intake'.",
+    "BACKEND BUG (minor): /api/doctors fallback. The `if not out:` branch was probably written so an empty users collection still returns Dr Lahari, but it now masks the legitimate empty-result case for unknown departments.",
+    "iter-7 carryover items (whatsapp_router.py voice-attachment indexing, public /media without expiry check, base64 audio in MongoDB) remain unchanged in this batch and are out of scope for Batch 1.",
+    "PatientPortal.jsx L62 + L103 correctly use 'Consult a Doctor' label (validated visually).",
+    "/app/frontend/src/lib/speech.js exists and is imported by both FollowupChat and ConsultationSession; mic data-testids render. Real STT cannot be exercised in headless Playwright (no mic), but no JS errors thrown when microphone is unsupported."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_batch1_e2e.py"
+  ],
+  "success_rate": {
+    "backend": "10/11 = 90.9% (1 failure: unknown-dept filter; 0 errors)",
+    "frontend": "100% — visual confirmation of full Consult a Doctor flow, all data-testids present, account creation + landing on /portal works"
+  },
+  "test_credentials": "Doctor: idrlapt@gmail.com / DrLahari! (NOW WORKING — iter-7 401 issue resolved). Demo Patient: demo45a880e1@projectcare.app / DemoPass1!. Fresh patient flow: POST /api/auth/register with qa+<random>@projectcare.app / Passw0rd! auto-creates a linked patient record.",
+  "seed_data_creation": "Each pytest run registers ~1 fresh qa+<hex>@projectcare.app patient and creates 2-3 ephemeral appointments which are deleted via /api/appointments/{id} DELETE in the same test. Frontend Playwright run created 1 fresh patient + 1 'requested' appointment for 2099-06-20 09:00 (not cleaned up — left in DB by design to verify slot disabling on reopen).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Run: pytest /app/backend/tests/test_batch1_e2e.py -v --junitxml=/app/test_reports/pytest/batch1_e2e_results.xml. Doctor login DrLahari! is WORKING again (was broken in iter-7). The only known backend gap is /api/doctors?department=<unknown> not returning empty. For Playwright signup: form has 4 inputs (Full Name, Email, Password, optional WhatsApp); submit button label is 'Create account' (NOT 'Sign up' — that's the tab). Use page.wait_for_selector(\"[data-testid^='doctor-card-']\") (not query_selector_all immediately after step-doctor mount) — the doctor list arrives via async /api/doctors fetch, so allow ~800ms after Next click before asserting card count.",
+  "rca_of_the_issue": "list_doctors() in /app/backend/server.py: when department filter excludes the canonical doctor, the `if not out: ...` block re-fetches Dr Lahari unconditionally and appends them. This was probably defensive coding for the 'no doctors seeded yet' case, but it now violates the API contract. Fix: gate the fallback on `not department`, e.g. `if not out and not department:`. Reproduction: GET /api/doctors?department=cardiology -> currently returns 1 doctor; should return 0."
+}

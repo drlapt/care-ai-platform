@@ -1,0 +1,195 @@
+{
+  "theme_and_archetype": {
+    "theme": "Light",
+    "archetype": "Archetype 3 (Pastel & Soft) + Archetype 4 (Swiss & High-Contrast Layout)",
+    "description": "A premium, 'Doctor Command Center' feeling like Stripe/Linear but tailored for healthcare. High usability, glassmorphic 'Crystal' surfaces, white base with soft blue/purple floating orbs, rounded geometry, and zero clutter. AI interactions feel deeply integrated, not bolted on."
+  },
+  "colors": {
+    "background": {
+      "base": "#F8FAFC",
+      "gradient_orbs": [
+        "radial-gradient(circle at 20% 30%, rgba(91, 124, 250, 0.08) 0%, transparent 40%)",
+        "radial-gradient(circle at 80% 80%, rgba(124, 77, 255, 0.08) 0%, transparent 40%)"
+      ]
+    },
+    "neutrals": {
+      "ink": "#0F1836",
+      "slate_dark": "#2A3558",
+      "slate_light": "#6B7595",
+      "surface": "rgba(255, 255, 255, 0.7)",
+      "border": "rgba(255, 255, 255, 0.4)"
+    },
+    "brand": {
+      "blue_primary": "#5B7CFA",
+      "purple_secondary": "#7C4DFF"
+    },
+    "accents": {
+      "success": "#3CC97C",
+      "warning": "#F2994A",
+      "critical": "#E85A5A"
+    }
+  },
+  "typography": {
+    "fonts": {
+      "display": "'Outfit', sans-serif",
+      "body": "'Plus Jakarta Sans', sans-serif"
+    },
+    "scale": {
+      "h1": "text-4xl tracking-tight font-display font-semibold text-[#0F1836]",
+      "h2": "text-2xl tracking-tight font-display font-semibold text-[#0F1836]",
+      "h3": "text-lg font-display font-medium text-[#2A3558]",
+      "body": "text-sm text-[#6B7595] leading-relaxed",
+      "label": "text-xs tracking-[0.05em] uppercase font-bold text-[#6B7595]"
+    }
+  },
+  "layout_and_spacing": {
+    "grid": "Control Room Grid (Dense, Widget-based)",
+    "structure": {
+      "sidebar": "fixed w-64 h-screen left-0 top-0 hidden lg:block",
+      "main_content": "ml-0 lg:ml-64 min-h-screen relative z-10",
+      "dashboard_grid": "grid grid-cols-12 gap-6 p-6 md:p-8"
+    },
+    "spacing_scale": {
+      "section": "py-8",
+      "card_padding": "p-6",
+      "element_gap": "gap-4"
+    },
+    "surface_classes": {
+      "glass_card": "bg-white/70 backdrop-blur-xl border border-white/40 shadow-[0_8px_32px_rgba(15,24,54,0.04)] rounded-[20px]",
+      "glass_soft": "bg-white/50 backdrop-blur-lg border border-white/20 rounded-2xl",
+      "glass_pill": "bg-white/60 backdrop-blur-md border border-white/30 rounded-full px-4 py-1.5 shadow-sm"
+    }
+  },
+  "kpi_thresholds": {
+    "follow_ups_due": {
+      "safe": { "max": 0, "color": "text-[#6B7595]" },
+      "warning": { "min": 1, "max": 4, "color": "text-[#F2994A]" },
+      "critical": { "min": 5, "color": "text-[#E85A5A]", "animation": "pulse" }
+    },
+    "alerts": {
+      "safe": { "max": 0, "color": "text-[#3CC97C]" },
+      "critical": { "min": 1, "color": "text-[#E85A5A] bg-[#E85A5A]/10 border-[#E85A5A]/30", "animation": "ring-pulse" }
+    },
+    "patient_satisfaction": {
+      "safe": { "min": 4.5, "color": "text-[#3CC97C]" },
+      "warning": { "max": 4.4, "color": "text-[#F2994A]" }
+    },
+    "wait_time": {
+      "safe": { "max": 15, "color": "text-[#6B7595]" },
+      "warning": { "min": 16, "max": 30, "color": "text-[#F2994A]" },
+      "critical": { "min": 31, "color": "text-[#E85A5A]" }
+    }
+  },
+  "micro_interactions": {
+    "hover": "transition-all duration-300 ease-out hover:-translate-y-0.5 hover:shadow-lg hover:border-white/60",
+    "active": "active:translate-y-0 active:scale-[0.98]",
+    "entrance": "animate-in fade-in slide-in-from-bottom-4 duration-500",
+    "status_pulse": "relative flex h-3 w-3. \n<span class='animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 bg-current'></span>\n<span class='relative inline-flex rounded-full h-3 w-3 bg-current'></span>"
+  },
+  "components": {
+    "Sidebar": {
+      "props": ["navItems", "activePath"],
+      "classes": "glass-card h-[calc(100vh-32px)] m-4 flex flex-col justify-between sticky top-4",
+      "items": ["Dashboard", "Patients", "Consultations", "Templates", "Follow-ups", "Alerts", "Lab Results", "Analytics", "Settings"]
+    },
+    "KpiStrip": {
+      "classes": "col-span-12 grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-4",
+      "metrics": ["Today's Consults", "Active Patients", "Follow-ups Due", "Alerts", "Rx Issued", "Satisfaction"]
+    },
+    "ActiveConsultationPanel": {
+      "classes": "col-span-12 xl:col-span-8 glass-card p-6 min-h-[400px] flex flex-col",
+      "description": "The command center core. Previews the active patient. Includes AI-extracted symptoms, critical alerts, AI suggestions, and a quick prescription builder.",
+      "features": ["AI Co-pilot badge", "Voice input floating button (glass-pill)", "Inline Rx Builder"]
+    },
+    "LiveConsultationQueue": {
+      "classes": "col-span-12 xl:col-span-4 glass-card p-6 flex flex-col",
+      "description": "List of waiting patients with AI intake completion status and urgency indicators."
+    },
+    "ScheduleTimeline": {
+      "classes": "col-span-12 lg:col-span-4 glass-card p-6",
+      "description": "Vertical timeline of today's appointments."
+    },
+    "AlertsSafetyPanel": {
+      "classes": "col-span-12 lg:col-span-4 glass-card p-6 border-t-4 border-t-[#E85A5A]",
+      "description": "High-priority warnings (drug interactions, abnormal labs). Must stand out without breaking aesthetics."
+    },
+    "QuickActions": {
+      "classes": "col-span-12 lg:col-span-4 grid grid-cols-2 gap-4",
+      "description": "Grid of 4-6 highly actionable buttons. Uses btn-primary and btn-ghost classes with Lucide icons."
+    },
+    "AnalyticsTeaser": {
+      "classes": "col-span-12 lg:col-span-4 glass-card p-6",
+      "description": "Mini charts showing time saved by AI and outcome patterns. Use Recharts with minimalist strokes (no axes)."
+    },
+    "PatientQueueSummary": {
+      "classes": "col-span-12 lg:col-span-4 glass-card p-6",
+      "description": "Aggregate view of the queue by type and average wait times."
+    },
+    "TemplatesPreview": {
+      "classes": "col-span-12 lg:col-span-4 glass-card p-6 relative overflow-hidden",
+      "description": "Phase 2 placeholder. Shows faded template cards with a 'Coming Soon' glass overlay."
+    },
+    "DoctorJourney": {
+      "classes": "col-span-12 w-full overflow-x-auto pb-4 hide-scrollbar flex gap-4 snap-x",
+      "description": "Horizontal scrollable step cards illustrating the AI-assisted workflow."
+    }
+  },
+  "doctor_journey_steps": [
+    { "step": 1, "title": "Login", "desc": "Secure auth", "icon": "ShieldCheck" },
+    { "step": 2, "title": "Dashboard", "desc": "Command center", "icon": "LayoutDashboard" },
+    { "step": 3, "title": "Select Patient", "desc": "Queue review", "icon": "Users" },
+    { "step": 4, "title": "AI Intake", "desc": "Pre-consult processing", "icon": "Bot" },
+    { "step": 5, "title": "Consult", "desc": "Live interaction", "icon": "Stethoscope" },
+    { "step": 6, "title": "AI Summary", "desc": "Automated SOAP", "icon": "FileText" },
+    { "step": 7, "title": "Review", "desc": "Doctor verification", "icon": "Eye" },
+    { "step": 8, "title": "Rx + Tests", "desc": "Prescription build", "icon": "Pill" },
+    { "step": 9, "title": "Safety Checks", "desc": "Interaction scan", "icon": "AlertTriangle" },
+    { "step": 10, "title": "Finalize", "desc": "Sign and send", "icon": "CheckCircle" },
+    { "step": 11, "title": "Follow-up", "desc": "Schedule next visit", "icon": "Calendar" }
+  ],
+  "empty_states": {
+    "queue": {
+      "icon": "Coffee",
+      "title": "Queue is clear",
+      "message": "Time for a well-deserved break. No waiting patients."
+    },
+    "alerts": {
+      "icon": "ShieldCheck",
+      "title": "All systems nominal",
+      "message": "No active safety warnings or critical labs."
+    },
+    "schedule": {
+      "icon": "CalendarX",
+      "title": "Open schedule",
+      "message": "No upcoming appointments for the rest of the day."
+    }
+  },
+  "accessibility": {
+    "focus_rings": "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#5B7CFA] focus-visible:ring-offset-2",
+    "aria_live": "Use aria-live='polite' for the Consultation Queue and Alerts Panel.",
+    "keyboard_nav": "Ensure full keyboard navigability within the Active Consultation Rx Builder.",
+    "testing": "All interactive elements must have data-testid attributes."
+  },
+  "icons": {
+    "library": "lucide-react",
+    "recommendations": {
+      "dashboard": "LayoutDashboard",
+      "patients": "Users",
+      "consultations": "Video",
+      "templates": "FileTemplate",
+      "alerts": "BellRing",
+      "analytics": "LineChart",
+      "settings": "Settings",
+      "ai_copilot": "Sparkles",
+      "voice_input": "Mic"
+    }
+  },
+  "image_urls": {
+    "patient_avatars": [
+      "https://images.unsplash.com/photo-1753120879121-678c3d42542e?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2Njl8MHwxfHNlYXJjaHw0fHxwb3J0cmFpdCUyMHByb2Zlc3Npb25hbCUyMGRpdmVyc2UlMjBoZWFkc2hvdCUyMHNtaWxpbmd8ZW58MHx8fHwxNzc3NDAwNjY3fDA&ixlib=rb-4.1.0&q=85",
+      "https://images.unsplash.com/photo-1697063882499-f7fca7d2d713?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2Njl8MHwxfHNlYXJjaHwyfHxwb3J0cmFpdCUyMHByb2Zlc3Npb25hbCUyMGRpdmVyc2UlMjBoZWFkc2hvdCUyMHNtaWxpbmd8ZW58MHx8fHwxNzc3NDAwNjY3fDA&ixlib=rb-4.1.0&q=85",
+      "https://images.unsplash.com/photo-1609371497456-3a55a205d5eb?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2Njl8MHwxfHNlYXJjaHwxfHxwb3J0cmFpdCUyMHByb2Zlc3Npb25hbCUyMGRpdmVyc2UlMjBoZWFkc2hvdCUyMHNtaWxpbmd8ZW58MHx8fHwxNzc3NDAwNjY3fDA&ixlib=rb-4.1.0&q=85",
+      "https://images.unsplash.com/photo-1581322929625-f4aab333778a?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2Njl8MHwxfHNlYXJjaHwzfHxwb3J0cmFpdCUyMHByb2Zlc3Npb25hbCUyMGRpdmVyc2UlMjBoZWFkc2hvdCUyMHNtaWxpbmd8ZW58MHx8fHwxNzc3NDAwNjY3fDA&ixlib=rb-4.1.0&q=85"
+    ]
+  }
+}

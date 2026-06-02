@@ -1,0 +1,50 @@
+{
+  "summary": "Iter-5 e2e of P0 features (email/password auth, 24/7 Follow-up AI chat, Medication Reminders, Doctor Alerts banner). Backend: 15/15 pytest tests PASSED in test_phase2_p0.py covering register/login/me, duplicate-email 409, weak-password 400, bad-password 401, follow-up emergency -> alert creation, history order, alert list (doctor-only 403 for patient), alert resolve, patient cross-patient 403, patient own POST allowed, reminder CRUD + taken log, patient only sees own reminders, unauth 401 on followup/alerts and reminders. Frontend: /login 3 tabs render (demo/signin/signup), signup POST /auth/register redirects patient to /portal, demo-doctor login shows sidebar with nav-alerts, nav-followup, nav-reminders; /followup chooser lists 21 patients, clicking tile opens chat, sending an emergency message returns assistant bubble with alert toast; /alerts lists open alerts with alert-resolve-* and alert-open-chat-* (href=/followup/:patientId) and resolve works (count 2 -> 1); dashboard-alerts-banner visible when alerts open; patient sidebar hides nav-alerts, shows nav-followup + nav-reminders; patient /followup opens chat directly (no chooser).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "Reminders page",
+        "issue": "Delete reminder flow uses window.confirm() (Reminders.jsx line 51). This is a UX anti-pattern inconsistent with the rest of the app (toast/glass-card styling). It also makes the delete button untestable via Playwright (auto-dismissed). Backend DELETE /api/reminders/{id} works correctly — confirmed via pytest. User-facing impact is only stylistic; real users can confirm and delete works.",
+        "selector": "reminder-delete-{id}",
+        "priority": "LOW"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_phase2_p0.py",
+    "/app/test_reports/pytest/phase2_p0_results.xml"
+  ],
+  "action_items": [
+    "(LOW) Replace window.confirm in Reminders.jsx remove() with an AlertDialog (shadcn) or inline confirm-on-second-click — matches app aesthetic and unblocks automated UI delete testing.",
+    "(CARRYOVER from iter-4) Split server.py (~1706 lines) into routers/services modules; no DELETE endpoint for stale TEST_followup appointments.",
+    "(CARRYOVER from iter-3) Add DELETE /api/appointments/{id} to clean up orphaned TEST_ records."
+  ],
+  "critical_code_review_comments": [
+    "server.py has grown to 1706 lines — exceeds the 700-line guideline. Strongly recommend splitting into routers/auth.py, routers/followup.py, routers/reminders.py, routers/patients.py, services/llm.py.",
+    "followup_message() passes full chat history on every turn to LlmChat — OK for now but capped at to_list(200). Consider trimming to last ~20 turns to prevent prompt bloat on long chats.",
+    "PATCH /api/followup/alerts/{id} accepts any value for `status` (no validation). Should whitelist 'open'|'acknowledged'|'resolved'.",
+    "POST /api/reminders and /reminders/{id}/taken have no role check — a patient could in theory create a reminder for another patient_id (patient role is not constrained to linked_patient_id on create). Recommend enforcing same pattern as followup_message for patient role.",
+    "DELETE /api/reminders/{id} has no ownership check — any authenticated user (patient or doctor) can delete any reminder by id. Low severity because reminder ids are UUIDs and not enumerated, but still a gap.",
+    "Reminders.jsx `window.confirm` should be replaced with shadcn AlertDialog to match the app's visual design system and for testability.",
+    "FollowupChat.jsx optimistic user bubble is appended then the server-returned user turn is not — only assistant is appended from res.message. That's fine because optimistic is kept, but if the network drops between user insert and assistant insert server-side, client state won't reflect the persisted user turn id."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_phase2_p0.py"
+  ],
+  "success_rate": {
+    "backend": "100% (15/15 pytest in test_phase2_p0.py)",
+    "frontend": "~95% — all critical flows pass (login tabs, signup, doctor/patient sidebar, followup chooser+chat, emergency alert path, /alerts resolve, dashboard banner, patient /followup autoroute). Only delete-reminder button couldn't be auto-verified via Playwright due to native window.confirm (minor)."
+  },
+  "test_credentials": "POST /api/auth/demo-doctor and POST /api/auth/demo-patient (no password). Also registered ephemeral qa+<uuid>@projectcare.app / Passw0rd! test users via /api/auth/register.",
+  "seed_data_creation": "Created multiple ephemeral email/password users (qa+<uuid>@projectcare.app) via /api/auth/register during tests — these remain in users collection. Created and deleted TEST_Metformin, TEST_OtherOnly, TEST_UI_Aspirin, TEST_DEL_CHECK reminders (one TEST_DEL_CHECK may linger because UI delete required confirm()). Multiple followup_chats entries and 2 doctor_alerts (1 resolved, 1 may remain open) for the first seeded patient.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Run: `pytest /app/backend/tests/test_phase2_p0.py -v --junitxml=/app/test_reports/pytest/phase2_p0_results.xml`. Key testids for UI: auth-tabs, tab-demo, tab-signin, tab-signup, signup-form, signup-name-input, signup-email-input, signup-password-input, role-patient, role-doctor, signup-submit-btn, signin-form, signin-email-input, signin-password-input, signin-submit-btn, nav-alerts, nav-followup, nav-reminders, followup-chooser-page, followup-patient-<id>, followup-chat-page, followup-messages, followup-input, followup-send-btn, msg-user, msg-assistant, alerts-page, alert-<id>, alert-resolve-<id>, alert-open-chat-<id>, dashboard-alerts-banner, view-alerts-btn, reminders-page, add-reminder-btn, reminder-form, reminder-patient-select, reminder-med-input, reminder-dose-input, reminder-freq-input, reminder-time-input, reminder-notes-input, reminder-submit-btn, reminder-<id>, reminder-taken-<id>, reminder-delete-<id>. NOTE: Reminders delete uses window.confirm — use `page.on('dialog', lambda d: d.accept())` in Playwright if re-testing delete.",
+  "rca_of_the_issue": "Reminder delete UI test failure RCA: Playwright defaults to dismissing window.confirm() dialogs. The Reminders page remove() handler (Reminders.jsx:51) calls window.confirm('Delete this reminder?') before calling the DELETE API. When Playwright auto-dismisses, the early return means DELETE is never called. Fix: either (a) replace window.confirm with shadcn AlertDialog, or (b) in tests, register `page.on('dialog', lambda d: asyncio.ensure_future(d.accept()))` prior to clicking delete. Backend DELETE /api/reminders/{id} is verified working in pytest. Not a production bug for manual users."
+}
