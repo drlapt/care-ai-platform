@@ -246,12 +246,43 @@ async def register(request: Request, response: Response):
 
 
 @api_router.post("/auth/login")
-async def exchange_session(request: Request, response: Response):
-    """Google OAuth disabled after Emergent decoupling."""
-    raise HTTPException(
-        status_code=503,
-        detail="Google OAuth temporarily disabled. Please use email/password login."
-    )
+async def login(request: Request, response: Response):
+    body = await request.json()
+
+    email = (body.get("email") or "").lower().strip()
+    password = body.get("password") or ""
+
+    if not email or not password:
+        raise HTTPException(status_code=400, detail="Email and password required")
+
+    user = await db.users.find_one({"email": email})
+
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+
+    password_hash = user.get("password_hash")
+
+    if not password_hash:
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+
+    if not pwd_ctx.verify(password, password_hash):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+
+    # Soft-deleted accounts cannot log in
+    if user.get("is_active") is False:
+        raise HTTPException(status_code=403, detail="Account is deactivated")
+
+    token = await _create_session(user["user_id"])
+
+    _set_session_cookie(response, token)
+
+    user.pop("_id", None)
+    user.pop("password_hash", None)
+
+    return {
+        "user": user,
+        "token": token
+    }
 async def admin_reset_account(request: Request):
     """Token-protected: reset password for any account, OR delete an account so the
     user can re-register. Useful on production when Mongo has stale data and the
@@ -1007,6 +1038,150 @@ async def cleanup_orphans(user: User = Depends(get_current_user)):
         res = await db[col].delete_many({"patient_id": {"$nin": list(patient_ids)}})
         removed[col] = res.deleted_count
     return {"removed": removed}
+
+
+@api_router.get("/admin/doctors")
+async def admin_list_doctors(user: User = Depends(require_role("admin", "doctor"))):
+    """Admin: list all doctor accounts with full profile (no password hash)."""
+    docs = await db.users.find(
+        {"role": "doctor"},
+        {"_id": 0, "password_hash": 0},
+    ).to_list(200)
+    for d in docs:
+        if isinstance(d.get("created_at"), datetime):
+            d["created_at"] = d["created_at"].isoformat()
+    return {"doctors": docs, "total": len(docs)}
+
+
+class AdminDoctorCreate(BaseModel):
+    email: str
+    password: str
+    name: str
+    specialization: Optional[str] = "General Physician"
+    department: Optional[str] = "general"
+    experience_years: Optional[int] = 0
+    bio: Optional[str] = ""
+    languages: Optional[List[str]] = ["English"]
+    rating: Optional[float] = None
+
+
+class AdminDoctorUpdate(BaseModel):
+    is_active: Optional[bool] = None
+    specialization: Optional[str] = None
+    department: Optional[str] = None
+    bio: Optional[str] = None
+    name: Optional[str] = None
+    experience_years: Optional[int] = None
+    languages: Optional[List[str]] = None
+    rating: Optional[float] = None
+
+
+@api_router.post("/admin/doctors", status_code=201)
+async def admin_create_doctor(payload: AdminDoctorCreate, user: User = Depends(require_role("admin"))):
+    """Admin: create a new doctor account."""
+    email = payload.email.lower().strip()
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="Valid email required")
+    if len(payload.password) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+
+    existing = await db.users.find_one({"email": email}, {"_id": 0, "user_id": 1})
+    if existing:
+        raise HTTPException(status_code=409, detail="Email already registered")
+
+    user_id = f"user_{uuid.uuid4().hex[:12]}"
+    doc = {
+        "user_id": user_id,
+        "email": email,
+        "name": payload.name.strip() or email.split("@")[0],
+        "picture": "",
+        "role": "doctor",
+        "linked_patient_id": None,
+        "password_hash": pwd_ctx.hash(payload.password),
+        "specialization": payload.specialization or "General Physician",
+        "department": (payload.department or "general").lower().strip(),
+        "experience_years": payload.experience_years or 0,
+        "bio": payload.bio or "",
+        "languages": payload.languages or ["English"],
+        "rating": payload.rating,
+        "is_active": True,
+        "created_at": _now_iso(),
+    }
+    await db.users.insert_one(doc.copy())
+    doc.pop("_id", None)
+    doc.pop("password_hash", None)
+    return {"doctor": doc}
+
+
+@api_router.patch("/admin/doctors/{doctor_user_id}")
+async def admin_update_doctor(
+    doctor_user_id: str,
+    payload: AdminDoctorUpdate,
+    user: User = Depends(require_role("admin")),
+):
+    """Admin: update allowed profile fields on a doctor account. Password not editable here."""
+    target = await db.users.find_one(
+        {"user_id": doctor_user_id, "role": "doctor"},
+        {"_id": 0, "password_hash": 0},
+    )
+    if not target:
+        raise HTTPException(status_code=404, detail="Doctor not found")
+
+    updates = {k: v for k, v in payload.model_dump(exclude_none=True).items()}
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    await db.users.update_one({"user_id": doctor_user_id}, {"$set": updates})
+    updated = await db.users.find_one(
+        {"user_id": doctor_user_id},
+        {"_id": 0, "password_hash": 0},
+    )
+    if isinstance(updated.get("created_at"), datetime):
+        updated["created_at"] = updated["created_at"].isoformat()
+    return {"doctor": updated}
+
+
+@api_router.delete("/admin/doctors/{doctor_user_id}")
+async def admin_delete_doctor(
+    doctor_user_id: str,
+    user: User = Depends(require_role("admin")),
+):
+    """Admin: soft-delete a doctor (sets is_active=False + deleted_at). Never physically removes the record."""
+    target = await db.users.find_one(
+        {"user_id": doctor_user_id, "role": "doctor"},
+        {"_id": 0, "password_hash": 0},
+    )
+    if not target:
+        raise HTTPException(status_code=404, detail="Doctor not found")
+
+    # Guard: canonical seeded doctor must never be soft-deleted
+    if target.get("email") == DOCTOR_EMAIL:
+        raise HTTPException(status_code=403, detail="Cannot deactivate the canonical doctor account")
+
+    # Guard: admin cannot soft-delete themselves (if they somehow also hold doctor role)
+    if doctor_user_id == user.user_id:
+        raise HTTPException(status_code=403, detail="Cannot deactivate your own account")
+
+    deleted_at = _now_iso()
+    await db.users.update_one(
+        {"user_id": doctor_user_id},
+        {"$set": {"is_active": False, "deleted_at": deleted_at}},
+    )
+
+    # Revoke all active sessions so the doctor cannot authenticate after deactivation
+    revoke_result = await db.user_sessions.delete_many({"user_id": doctor_user_id})
+
+    updated = await db.users.find_one(
+        {"user_id": doctor_user_id},
+        {"_id": 0, "password_hash": 0},
+    )
+    if isinstance(updated.get("created_at"), datetime):
+        updated["created_at"] = updated["created_at"].isoformat()
+
+    return {
+        "doctor": updated,
+        "sessions_revoked": revoke_result.deleted_count,
+    }
 
 
 # ============================================================
@@ -5864,7 +6039,39 @@ async def ensure_canonical_accounts():
             update_doc["linked_patient_id"] = linked_pid
         await db.users.update_one({"email": pat_email}, {"$set": update_doc})
         logger.info(f"Reset canonical demo patient password: {pat_email}")
+    # ---- Admin: admin@careai.dev ----
+    admin_email = "admin@careai.dev"
 
+    admin_user = await db.users.find_one(
+        {"email": admin_email},
+        {"_id": 0}
+    )
+
+    if not admin_user:
+        await db.users.insert_one({
+            "user_id": f"user_{uuid.uuid4().hex[:12]}",
+            "email": admin_email,
+            "name": "CARE Admin",
+            "picture": "",
+            "role": "admin",
+            "linked_patient_id": None,
+            "password_hash": pwd_ctx.hash("admin123"),
+            "created_at": _now_iso(),
+        })
+
+        logger.info(f"Seeded canonical admin account: {admin_email}")
+
+    else:
+        await db.users.update_one(
+            {"email": admin_email},
+            {"$set": {
+                "password_hash": pwd_ctx.hash("admin123"),
+                "role": "admin",
+                "name": admin_user.get("name") or "CARE Admin",
+            }},
+        )
+
+        logger.info(f"Reset canonical admin password: {admin_email}")
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
