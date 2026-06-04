@@ -1191,6 +1191,73 @@ async def admin_list_patients(user: User = Depends(require_role("admin"))):
     return {"patients": patients, "total": len(patients)}
 
 
+class AdminPatientUpdate(BaseModel):
+    is_active: Optional[bool] = None
+    assigned_doctor_id: Optional[str] = None
+    tags: Optional[List[str]] = None
+    admin_notes: Optional[str] = None
+
+
+@api_router.patch("/admin/patients/{patient_id}")
+async def admin_update_patient(
+    patient_id: str,
+    payload: AdminPatientUpdate,
+    user: User = Depends(require_role("admin")),
+):
+    """Admin: update allowed operational fields on a patient record. Medical/clinical data not editable here."""
+    target = await db.patients.find_one({"id": patient_id}, {"_id": 0, "id": 1})
+    if not target:
+        raise HTTPException(status_code=404, detail="Patient not found")
+
+    updates = {k: v for k, v in payload.model_dump(exclude_none=True).items()}
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    updates["updated_at"] = _now_iso()
+    await db.patients.update_one({"id": patient_id}, {"$set": updates})
+
+    updated = await db.patients.find_one(
+        {"id": patient_id},
+        {
+            "_id": 0,
+            "id": 1,
+            "personal_info.name": 1,
+            "personal_info.phone": 1,
+            "personal_info.age": 1,
+            "personal_info.gender": 1,
+            "created_at": 1,
+            "updated_at": 1,
+            "assigned_doctor_id": 1,
+            "is_active": 1,
+            "tags": 1,
+            "admin_notes": 1,
+        },
+    )
+    pi = updated.get("personal_info") or {}
+    created_at = updated.get("created_at")
+    if isinstance(created_at, datetime):
+        created_at = created_at.isoformat()
+    updated_at = updated.get("updated_at")
+    if isinstance(updated_at, datetime):
+        updated_at = updated_at.isoformat()
+
+    return {
+        "patient": {
+            "id": updated.get("id"),
+            "name": pi.get("name"),
+            "phone": pi.get("phone"),
+            "age": pi.get("age"),
+            "gender": pi.get("gender"),
+            "created_at": created_at,
+            "updated_at": updated_at,
+            "assigned_doctor_id": updated.get("assigned_doctor_id"),
+            "is_active": updated.get("is_active"),
+            "tags": updated.get("tags"),
+            "admin_notes": updated.get("admin_notes"),
+        }
+    }
+
+
 # ============================================================
 # Messages
 # ============================================================
