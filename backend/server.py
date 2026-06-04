@@ -1153,6 +1153,44 @@ async def admin_delete_doctor(
     }
 
 
+@api_router.get("/admin/patients")
+async def admin_list_patients(user: User = Depends(require_role("admin"))):
+    """Admin: list all patients with sanitized operational fields only (no medical history, notes, or uploads)."""
+    docs = await db.patients.find(
+        {},
+        {
+            "_id": 0,
+            "id": 1,
+            "personal_info.name": 1,
+            "personal_info.phone": 1,
+            "personal_info.age": 1,
+            "personal_info.gender": 1,
+            "created_at": 1,
+            "assigned_doctor_id": 1,
+            "is_active": 1,
+        },
+    ).sort("created_at", -1).to_list(200)
+
+    patients = []
+    for p in docs:
+        pi = p.get("personal_info") or {}
+        created_at = p.get("created_at")
+        if isinstance(created_at, datetime):
+            created_at = created_at.isoformat()
+        patients.append({
+            "id": p.get("id"),
+            "name": pi.get("name"),
+            "phone": pi.get("phone"),
+            "age": pi.get("age"),
+            "gender": pi.get("gender"),
+            "created_at": created_at,
+            "assigned_doctor_id": p.get("assigned_doctor_id"),
+            "is_active": p.get("is_active"),
+        })
+
+    return {"patients": patients, "total": len(patients)}
+
+
 # ============================================================
 # Messages
 # ============================================================
