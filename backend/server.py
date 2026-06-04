@@ -283,39 +283,6 @@ async def login(request: Request, response: Response):
         "user": user,
         "token": token
     }
-async def admin_reset_account(request: Request):
-    """Token-protected: reset password for any account, OR delete an account so the
-    user can re-register. Useful on production when Mongo has stale data and the
-    user needs to recover a stuck login/signup. Token is set via env ADMIN_RESET_TOKEN.
-
-    Body: { "token": "<ADMIN_RESET_TOKEN>", "email": "...", "action": "reset"|"delete", "new_password": "..." (for reset) }
-    """
-    body = await request.json()
-    expected = os.environ.get("ADMIN_RESET_TOKEN", "").strip()
-    if not expected:
-        raise HTTPException(status_code=503, detail="Admin reset disabled (no ADMIN_RESET_TOKEN set)")
-    if (body.get("token") or "").strip() != expected:
-        raise HTTPException(status_code=401, detail="Invalid admin token")
-    email = (body.get("email") or "").lower().strip()
-    if not email:
-        raise HTTPException(status_code=400, detail="email required")
-    action = (body.get("action") or "reset").lower()
-
-    if action == "delete":
-        r = await db.users.delete_one({"email": email})
-        return {"deleted": r.deleted_count, "email": email}
-
-    new_password = body.get("new_password") or "123456"
-    if len(new_password) < 6:
-        raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
-    user = await db.users.find_one({"email": email}, {"_id": 0})
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    await db.users.update_one(
-        {"email": email},
-        {"$set": {"password_hash": pwd_ctx.hash(new_password)}},
-    )
-    return {"reset": True, "email": email}
 
 
 @api_router.post("/auth/demo-doctor")
