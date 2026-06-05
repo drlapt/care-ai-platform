@@ -483,7 +483,6 @@ export default function PatientPortal() {
 
       {showConsult && (
         <ConsultNowModal
-          patientId={user.linked_patient_id}
           onClose={() => setShowConsult(false)}
           onBooked={handleBooked}
         />

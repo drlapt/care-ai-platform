@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { X, Calendar, Stethoscope, Send, ChevronRight, ChevronLeft, Award, Star, Loader2, CheckCircle2 } from "lucide-react";
-import { createAppointment, listDoctors, doctorAvailability } from "@/lib/api";
+import { createAppointment, listDoctors, doctorAvailability, listProfiles } from "@/lib/api";
 
 function todayISO() {
   const d = new Date();
@@ -18,10 +18,16 @@ function nextBusinessSlot() {
   return new Date(d - tz).toISOString().slice(0, 10);
 }
 
-const STEPS = ["department", "doctor", "slot", "reason"];
+const STEPS = ["profile", "department", "doctor", "slot", "reason"];
 
-export default function ConsultNowModal({ patientId, onClose, onBooked }) {
+const REL_LABEL = { self: "You", mother: "Mother", father: "Father", child: "Child", family: "Family", guest: "Guest" };
+const REL_COLOR = { self: "#5B7CFA", mother: "#E573A0", father: "#3B82F6", child: "#10B981", guest: "#8B5CF6" };
+
+export default function ConsultNowModal({ onClose, onBooked }) {
   const [step, setStep] = useState(0);
+  const [profiles, setProfiles] = useState([]);
+  const [selectedPatientId, setSelectedPatientId] = useState(null);
+  const [loadingProfiles, setLoadingProfiles] = useState(true);
   const [departments, setDepartments] = useState([]);
   const [doctors, setDoctors] = useState([]);
   const [department, setDepartment] = useState("general");
@@ -34,6 +40,18 @@ export default function ConsultNowModal({ patientId, onClose, onBooked }) {
   const [type, setType] = useState("consultation");
   const [reason, setReason] = useState("");
   const [saving, setSaving] = useState(false);
+
+  // Load profiles on mount
+  useEffect(() => {
+    listProfiles()
+      .then((d) => {
+        const profs = d.profiles || [];
+        setProfiles(profs);
+        if (profs.length === 1) setSelectedPatientId(profs[0].id);
+      })
+      .catch(() => {})
+      .finally(() => setLoadingProfiles(false));
+  }, []);
 
   // Load doctors when modal opens / department changes
   useEffect(() => {
@@ -70,7 +88,7 @@ export default function ConsultNowModal({ patientId, onClose, onBooked }) {
     setSaving(true);
     try {
       const appt = await createAppointment({
-        patient_id: patientId,
+        patient_id: selectedPatientId,
         date, time,
         type, reason,
         duration_min: 30,
@@ -88,14 +106,18 @@ export default function ConsultNowModal({ patientId, onClose, onBooked }) {
   };
 
   const next = () => {
-    if (step === 0) { setStep(1); return; }
-    if (step === 1) {
-      if (!doctor) { toast.error("Pick a doctor first"); return; }
-      setStep(2); return;
+    if (step === 0) {
+      if (!selectedPatientId) { toast.error("Select a profile first"); return; }
+      setStep(1); return;
     }
+    if (step === 1) { setStep(2); return; }
     if (step === 2) {
-      if (!time) { toast.error("Pick a time slot"); return; }
+      if (!doctor) { toast.error("Pick a doctor first"); return; }
       setStep(3); return;
+    }
+    if (step === 3) {
+      if (!time) { toast.error("Pick a time slot"); return; }
+      setStep(4); return;
     }
   };
   const back = () => setStep((s) => Math.max(0, s - 1));
@@ -134,8 +156,43 @@ export default function ConsultNowModal({ patientId, onClose, onBooked }) {
           ))}
         </div>
 
-        {/* STEP 1: Department */}
+        {/* STEP 0: Profile selection */}
         {step === 0 && (
+          <div className="flex flex-col gap-3" data-testid="step-profile">
+            <div className="font-semibold text-[15px]" style={{ color: "#0F1836" }}>Who is this consultation for?</div>
+            {loadingProfiles ? (
+              <div className="flex justify-center py-6"><Loader2 size={20} className="animate-spin" style={{ color: "#5B7CFA" }} /></div>
+            ) : profiles.length === 0 ? (
+              <div className="text-[13px]" style={{ color: "#6B7595" }}>No profiles found. Please create a profile first.</div>
+            ) : (
+              <div className="flex flex-col gap-2">
+                {profiles.map((p) => {
+                  const color = REL_COLOR[p.relationship] || "#5B7CFA";
+                  const sel = p.id === selectedPatientId;
+                  return (
+                    <button
+                      key={p.id}
+                      onClick={() => setSelectedPatientId(p.id)}
+                      className={`flex items-center gap-3 p-3 rounded-2xl border transition text-left ${sel ? "border-[#5B7CFA] bg-[#5B7CFA]/8" : "border-[#5B7CFA]/15 bg-white hover:bg-[#5B7CFA]/5"}`}
+                    >
+                      <div className="w-9 h-9 rounded-full flex items-center justify-center text-white font-bold text-[14px] shrink-0" style={{ background: color }}>
+                        {(p.name || "?").charAt(0).toUpperCase()}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="font-semibold text-[13.5px] truncate" style={{ color: "#0F1836" }}>{p.name}</div>
+                        <div className="text-[11.5px]" style={{ color: "#6B7595" }}>{REL_LABEL[p.relationship] || "Profile"}</div>
+                      </div>
+                      {sel && <div className="w-4 h-4 rounded-full bg-[#5B7CFA] flex items-center justify-center"><div className="w-2 h-2 rounded-full bg-white" /></div>}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* STEP 1: Department */}
+        {step === 1 && (
           <div className="flex flex-col gap-3" data-testid="step-department">
             <div className="text-[13.5px]" style={{ color: "#2A3558" }}>Which department do you need?</div>
             <div className="grid grid-cols-1 gap-2">
@@ -157,7 +214,7 @@ export default function ConsultNowModal({ patientId, onClose, onBooked }) {
         )}
 
         {/* STEP 2: Doctor cards */}
-        {step === 1 && (
+        {step === 2 && (
           <div className="flex flex-col gap-3" data-testid="step-doctor">
             <div className="text-[13.5px]" style={{ color: "#2A3558" }}>Choose your doctor</div>
             {loadingDoctors ? (
@@ -201,7 +258,7 @@ export default function ConsultNowModal({ patientId, onClose, onBooked }) {
         )}
 
         {/* STEP 3: Date + slots */}
-        {step === 2 && doctor && (
+        {step === 3 && doctor && (
           <div className="flex flex-col gap-3" data-testid="step-slot">
             <div className="text-[13.5px]" style={{ color: "#2A3558" }}>Pick a time with <span className="font-semibold">{doctor.name}</span></div>
             <label className="flex flex-col gap-1">
@@ -242,7 +299,7 @@ export default function ConsultNowModal({ patientId, onClose, onBooked }) {
         )}
 
         {/* STEP 4: Reason */}
-        {step === 3 && (
+        {step === 4 && (
           <div className="flex flex-col gap-3" data-testid="step-reason">
             <div className="glass-soft p-3 text-[12.5px]" style={{ color: "#2A3558" }}>
               <span className="font-semibold">{doctor?.name}</span> · {date} · {time}
@@ -284,7 +341,7 @@ export default function ConsultNowModal({ patientId, onClose, onBooked }) {
             </button>
           )}
           <div className="flex-1" />
-          {step < 3 ? (
+          {step < 4 ? (
             <button onClick={next} className="btn-primary inline-flex items-center gap-1.5" data-testid="consult-next-btn">
               Next <ChevronRight size={14} />
             </button>
@@ -295,7 +352,7 @@ export default function ConsultNowModal({ patientId, onClose, onBooked }) {
           )}
         </div>
 
-        {step === 3 && (
+        {step === 4 && (
           <p className="text-[11px] text-center" style={{ color: "#6B7595" }}>
             {doctor?.name} will confirm your slot shortly. For emergencies, call 911 or use the red-flag Care AI chat.
           </p>
