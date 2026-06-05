@@ -117,12 +117,14 @@ export default function FollowupChat() {
     const text = (textOverride ?? input).trim();
     if (!text || sending || !patientId) return;
     setInput("");
-    const optimistic = { id: `temp-${Date.now()}`, patient_id: patientId, role: "user", text, created_at: new Date().toISOString() };
+    const senderRole = user?.role === "patient" ? "user" : "doctor";
+    const optimistic = { id: `temp-${Date.now()}`, patient_id: patientId, role: senderRole, sender_name: senderRole === "doctor" ? user?.name : undefined, text, created_at: new Date().toISOString() };
     setMessages((m) => [...m, optimistic]);
     setSending(true);
     try {
       const res = await followupMessage(patientId, text, language);
-      setMessages((m) => [...m.filter((x) => x.id !== optimistic.id), optimistic, res.message]);
+      const newMsgs = res.message ? [optimistic, res.message] : [optimistic];
+      setMessages((m) => [...m.filter((x) => x.id !== optimistic.id), ...newMsgs]);
       if (res.alert) {
         const urgency = res.alert.urgency;
         if (urgency === "emergency") toast.error("⚠️ EMERGENCY — your doctor has been alerted. If symptoms worsen, call 911.");
@@ -283,23 +285,36 @@ export default function FollowupChat() {
             </div>
           )}
           {messages.map((m) => {
-            const isUser = m.role === "user";
+            const isPatientMsg = m.role === "user";
+            const isDoctorMsg  = m.role === "doctor";
+            const isUser = isPatientMsg || isDoctorMsg;
+            const isMine = (user?.role === "patient" && isPatientMsg) || (user?.role !== "patient" && isDoctorMsg);
             const urg = m.urgency && URG_STYLES[m.urgency];
             const isVoice = m.media_type === "voice";
             const isWa = m.source === "whatsapp";
             const modeMeta = !isUser && m.mode ? MODE_STYLES[m.mode] : null;
             const riskMeta = !isUser && m.risk ? RISK_STYLES[m.risk] : null;
-            const isDoctor = user?.role !== "patient";
+            const isViewerDoctor = user?.role !== "patient";
+            const bubbleBg = isDoctorMsg
+              ? "bg-gradient-to-br from-[#3CC97C] to-[#22a06b] text-white"
+              : isPatientMsg
+                ? "bg-gradient-to-br from-[#5B7CFA] to-[#7C4DFF] text-white"
+                : "bg-white/80 border border-white";
             return (
-              <div key={m.id} className={`flex ${isUser ? "justify-end" : "justify-start"}`} data-testid={`msg-${m.role}`}>
-                <div className={`max-w-[80%] rounded-2xl px-4 py-3 ${isUser ? "bg-gradient-to-br from-[#5B7CFA] to-[#7C4DFF] text-white" : "bg-white/80 border border-white"}`}>
+              <div key={m.id} className={`flex ${isMine ? "justify-end" : "justify-start"}`} data-testid={`msg-${m.role}`}>
+                <div className={`max-w-[80%] rounded-2xl px-4 py-3 ${bubbleBg}`}>
                   <div className="flex items-center flex-wrap gap-1.5 mb-1.5">
+                    {isDoctorMsg && (
+                      <div className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-white/25 text-white">
+                        {m.sender_name || "Doctor"}
+                      </div>
+                    )}
                     {urg && !isUser && (
                       <div className="inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full text-white" style={{ background: urg.bg }}>
                         <urg.icon size={10} /> {urg.label}
                       </div>
                     )}
-                    {isDoctor && modeMeta && (
+                    {isViewerDoctor && modeMeta && (
                       <div
                         className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full"
                         style={{ background: `${modeMeta.bg}18`, color: modeMeta.bg }}
@@ -309,7 +324,7 @@ export default function FollowupChat() {
                         <modeMeta.icon size={9} /> {modeMeta.label}
                       </div>
                     )}
-                    {isDoctor && riskMeta && m.risk !== "safe" && (
+                    {isViewerDoctor && riskMeta && m.risk !== "safe" && (
                       <div
                         className="inline-flex items-center gap-0.5 text-[10px] font-semibold px-1.5 py-0.5 rounded-full"
                         style={{ background: `${riskMeta.color}14`, color: riskMeta.color }}
@@ -330,7 +345,7 @@ export default function FollowupChat() {
                   </div>
                   <div className={`text-[14px] whitespace-pre-wrap leading-relaxed`} style={{ color: isUser ? "#fff" : "#0F1836" }}>{m.text}</div>
                   {/* Phase 18 — Gap analysis footer (doctor-only) */}
-                  {isDoctor && !isUser && (m.gap || []).length > 0 && (
+                  {isViewerDoctor && !isUser && (m.gap || []).length > 0 && (
                     <div className="mt-2 text-[11px] rounded-lg px-2 py-1.5" style={{ background: "rgba(124,77,255,0.06)", color: "#3F2F7A" }} data-testid={`msg-gap-${m.id}`}>
                       <span className="font-bold uppercase tracking-wider text-[9.5px] mr-1">Care AI next step:</span>
                       {(m.gap || []).join(" · ")}

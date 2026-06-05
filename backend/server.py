@@ -72,6 +72,18 @@ def _strip_json_fence(txt: str) -> str:
 
 
 openai_client = AsyncOpenAI(api_key=EMERGENT_LLM_KEY)
+async def _llm(system: str, user: str, session_id: str = "") -> str:
+    """Drop-in replacement for LlmChat().with_model().send_message()"""
+    r = await openai_client.chat.completions.create(
+        model="gpt-4o",
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        max_tokens=2000,
+        temperature=0.3,
+    )
+    return r.choices[0].message.content or ""
 
 async def _llm_json(system_message: str, user_text: str, session_id: str) -> Any:
     response = await openai_client.chat.completions.create(
@@ -194,8 +206,8 @@ async def register(request: Request, response: Response):
     if len(password) < 6:
         raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
 
-    # Hardcoded routing: only idrlapt@gmail.com is the doctor; everyone else is a patient.
-    role = "doctor" if email == DOCTOR_EMAIL else "patient"
+    # All public registrations create patient accounts. Doctors are created via /admin/doctors.
+    role = "patient"
 
     existing = await db.users.find_one({"email": email}, {"_id": 0})
     if existing:
@@ -732,14 +744,14 @@ async def _tts_synth_bytes(text: str, voice: str = "nova", speed: float = 1.0) -
     text = (text or "").strip()[:4000]
     if not text:
         return b""
-    tts_client = OpenAITextToSpeech(api_key=EMERGENT_LLM_KEY)
-    return await tts_client.generate_speech(
-        text=text,
+    resp = await openai_client.audio.speech.create(
         model="tts-1",
         voice=voice or "nova",
+        input=text,
         speed=max(0.5, min(1.5, speed or 1.0)),
         response_format="mp3",
     )
+    return resp.content
 
 
 @api_router.post("/transcribe")
@@ -822,7 +834,7 @@ def _doctor_card(u: Dict[str, Any]) -> Dict[str, Any]:
     """Public-safe doctor card payload — no email, no password hash."""
     return {
         "id": u["user_id"],
-        "name": u.get("name") or "Dr. Lahari",
+        "name": u.get("name") or "Doctor",
         "specialization": u.get("specialization") or _DEFAULT_DOCTOR_PROFILE["specialization"],
         "department": u.get("department") or _DEFAULT_DOCTOR_PROFILE["department"],
         "experience_years": u.get("experience_years") or _DEFAULT_DOCTOR_PROFILE["experience_years"],
@@ -834,19 +846,11 @@ def _doctor_card(u: Dict[str, Any]) -> Dict[str, Any]:
 
 @api_router.get("/doctors")
 async def list_doctors(department: Optional[str] = None, user: User = Depends(get_current_user)):
-    # Only the canonical Dr. Lahari is exposed today. Future: support multiple
-    # active doctors via an explicit `is_active` flag on the user record.
-    q = {"role": "doctor", "email": DOCTOR_EMAIL}
+    q: Dict[str, Any] = {"role": "doctor", "is_active": {"$ne": False}}
     if department:
         q["department"] = department
-    docs = await db.users.find(q, {"_id": 0}).to_list(50)
+    docs = await db.users.find(q, {"_id": 0, "password_hash": 0}).to_list(50)
     out = [_doctor_card(await _ensure_doctor_profile(u)) for u in docs]
-    # Defensive fallback: if NO department filter was applied and we somehow have
-    # no doctor record yet, surface the canonical Dr. Lahari so the UI never breaks.
-    if not out and not department:
-        d = await db.users.find_one({"email": DOCTOR_EMAIL}, {"_id": 0})
-        if d:
-            out.append(_doctor_card(await _ensure_doctor_profile(d)))
     return {"departments": DEPARTMENTS, "doctors": out}
 
 
@@ -906,21 +910,27 @@ async def create_appointment(payload: AppointmentCreate, user: User = Depends(ge
     if user.role == "patient" and user.linked_patient_id != payload.patient_id:
         raise HTTPException(status_code=403, detail="Patients can only book for themselves")
 
-    # If a patient is booking, the appointment belongs to the chosen doctor (default Dr. Lahari).
+    # If a patient is booking, resolve the target doctor from the collection.
     if user.role == "patient":
         if payload.doctor_id:
             doctor_user = await db.users.find_one(
-                {"user_id": payload.doctor_id, "role": "doctor"},
+                {"user_id": payload.doctor_id, "role": "doctor", "is_active": {"$ne": False}},
                 {"_id": 0, "user_id": 1, "name": 1, "specialization": 1, "department": 1},
             )
             if not doctor_user:
                 raise HTTPException(status_code=404, detail="Doctor not found")
         else:
-            doctor_user = await db.users.find_one({"email": DOCTOR_EMAIL}, {"_id": 0, "user_id": 1, "name": 1, "specialization": 1, "department": 1})
-        doctor_id = (doctor_user or {}).get("user_id", "")
-        doctor_name = (doctor_user or {}).get("name") or "Dr. Lahari"
-        doctor_specialization = (doctor_user or {}).get("specialization") or _DEFAULT_DOCTOR_PROFILE["specialization"]
-        doctor_department = payload.department or (doctor_user or {}).get("department") or _DEFAULT_DOCTOR_PROFILE["department"]
+            # No doctor specified: assign the first active doctor in the collection.
+            doctor_user = await db.users.find_one(
+                {"role": "doctor", "is_active": {"$ne": False}},
+                {"_id": 0, "user_id": 1, "name": 1, "specialization": 1, "department": 1},
+            )
+            if not doctor_user:
+                raise HTTPException(status_code=503, detail="No active doctors available to accept appointments")
+        doctor_id = doctor_user.get("user_id", "")
+        doctor_name = doctor_user.get("name") or "Doctor"
+        doctor_specialization = doctor_user.get("specialization") or _DEFAULT_DOCTOR_PROFILE["specialization"]
+        doctor_department = payload.department or doctor_user.get("department") or _DEFAULT_DOCTOR_PROFILE["department"]
     else:
         doctor_id = user.user_id
         doctor_name = user.name
@@ -996,6 +1006,29 @@ async def delete_appointment(appt_id: str, user: User = Depends(get_current_user
     return {"deleted": True, "id": appt_id}
 
 
+
+@api_router.get("/admin/stats")
+async def admin_stats(user: User = Depends(require_role("admin"))):
+    """Admin: top-level operational stats for the dashboard."""
+    total_patients = await db.patients.count_documents({})
+    active_patients = await db.patients.count_documents({"is_active": True})
+    total_doctors = await db.users.count_documents({"role": "doctor"})
+    active_doctors = await db.users.count_documents({"role": "doctor", "is_active": True})
+    total_consultations = await db.consultation_sessions.count_documents({})
+    today = _now_iso()[:10]
+    consultations_today = await db.consultation_sessions.count_documents({"created_at": {"$gte": today}})
+    open_alerts = await db.followup_alerts.count_documents({"status": "open"})
+    pending_appointments = await db.appointments.count_documents({"status": "scheduled"})
+    whatsapp_connected = await db.users.count_documents({"whatsapp_number": {"$exists": True, "$ne": None, "$ne": ""}})
+    return {
+        "patients": {"total": total_patients, "active": active_patients},
+        "doctors": {"total": total_doctors, "active": active_doctors},
+        "consultations": {"total": total_consultations, "today": consultations_today},
+        "alerts": {"open": open_alerts},
+        "appointments": {"pending": pending_appointments},
+        "whatsapp": {"connected": whatsapp_connected},
+    }
+
 @api_router.post("/admin/cleanup-orphans")
 async def cleanup_orphans(
     current_user: dict = Depends(require_role("admin"))
@@ -1010,7 +1043,7 @@ async def cleanup_orphans(
 
 
 @api_router.get("/admin/doctors")
-async def admin_list_doctors(user: User = Depends(require_role("admin", "doctor"))):
+async def admin_list_doctors(user: User = Depends(require_role("admin"))):
     """Admin: list all doctor accounts with full profile (no password hash)."""
     docs = await db.users.find(
         {"role": "doctor"},
@@ -1154,10 +1187,29 @@ async def admin_delete_doctor(
 
 
 @api_router.get("/admin/patients")
-async def admin_list_patients(user: User = Depends(require_role("admin"))):
-    """Admin: list all patients with sanitized operational fields only (no medical history, notes, or uploads)."""
+async def admin_list_patients(
+    user: User = Depends(require_role("admin")),
+    search: Optional[str] = None,
+    is_active: Optional[bool] = None,
+    assigned_doctor_id: Optional[str] = None,
+    skip: int = 0,
+    limit: int = 50,
+):
+    """Admin: list patients with search, filtering, and pagination."""
+    query: Dict[str, Any] = {}
+    if is_active is not None:
+        query["is_active"] = is_active
+    if assigned_doctor_id:
+        query["assigned_doctor_id"] = assigned_doctor_id
+    if search:
+        term = search.strip()
+        query["$or"] = [
+            {"personal_info.name": {"$regex": term, "$options": "i"}},
+            {"personal_info.phone": {"$regex": term, "$options": "i"}},
+        ]
+    total = await db.patients.count_documents(query)
     docs = await db.patients.find(
-        {},
+        query,
         {
             "_id": 0,
             "id": 1,
@@ -1169,8 +1221,7 @@ async def admin_list_patients(user: User = Depends(require_role("admin"))):
             "assigned_doctor_id": 1,
             "is_active": 1,
         },
-    ).sort("created_at", -1).to_list(200)
-
+    ).sort("created_at", -1).skip(skip).limit(limit).to_list(limit)
     patients = []
     for p in docs:
         pi = p.get("personal_info") or {}
@@ -1187,8 +1238,7 @@ async def admin_list_patients(user: User = Depends(require_role("admin"))):
             "assigned_doctor_id": p.get("assigned_doctor_id"),
             "is_active": p.get("is_active"),
         })
-
-    return {"patients": patients, "total": len(patients)}
+    return {"patients": patients, "total": total, "skip": skip, "limit": limit}
 
 
 class AdminPatientUpdate(BaseModel):
@@ -1599,10 +1649,26 @@ def _parse_summary(reply: str):
     return clean, payload
 
 
+async def _resolve_attending_doctor_name(assigned_doctor_id: Optional[str]) -> str:
+    """Return the attending doctor's name: prefer assigned, fall back to first active doctor."""
+    if assigned_doctor_id:
+        doc = await db.users.find_one(
+            {"user_id": assigned_doctor_id, "role": "doctor"},
+            {"_id": 0, "name": 1},
+        )
+        if doc and doc.get("name"):
+            return doc["name"]
+    fallback = await db.users.find_one(
+        {"role": "doctor", "is_active": {"$ne": False}},
+        {"_id": 0, "name": 1},
+    )
+    return (fallback or {}).get("name") or "your doctor"
+
+
 async def _careai_chat_call(patient: Dict[str, Any], user_text: str, history: Optional[List[Dict[str, Any]]] = None) -> str:
     pi = patient.get("personal_info", {})
     first = (pi.get("name") or "there").split(" ")[0]
-    doctor = "Dr. Lahari"
+    doctor = await _resolve_attending_doctor_name(patient.get("assigned_doctor_id"))
     complaint = patient.get("medical_history", {}).get("chief_complaint", "")
     dynamic = (
         f"\n\n# SESSION CONTEXT\nPatient first name: {first}\nAge: {pi.get('age')}\n"
@@ -1620,12 +1686,7 @@ async def _careai_chat_call(patient: Dict[str, Any], user_text: str, history: Op
             + "\n\n# INSTRUCTIONS\nContinue the conversation naturally. Do NOT greet the patient again — you already did. "
             "Respond to the patient's latest message. If you have enough info, produce the final <SUMMARY> JSON."
         )
-    chat = LlmChat(
-        api_key=EMERGENT_LLM_KEY,
-        session_id=f"careai-{patient['id']}-{uuid.uuid4().hex[:8]}",
-        system_message=CARE_AI_SYSTEM + dynamic + transcript_block,
-    ).with_model("openai", "gpt-4o")
-    return await chat.send_message(UserMessage(text=user_text))
+    return await _llm(CARE_AI_SYSTEM + dynamic + transcript_block, user_text)
 
 
 @api_router.post("/care-ai/start")
@@ -1853,6 +1914,13 @@ Set `"correction": true` ONLY when the patient's CURRENT message contradicts or 
 # SAFETY
 Never change doses. Never recommend stopping a medication. If the patient is thinking about stopping, say "I'll flag this for Dr. Lahari to review with you."
 
+# DOCTOR INSTRUCTIONS IN HISTORY
+When the conversation history contains a line starting with "DOCTOR:", it is a direct instruction from the supervising physician — treat it as authoritative clinical guidance that overrides your defaults.
+- If the doctor says "tell the patient to rest for X days", relay this in warm patient-friendly language.
+- If the doctor updates a dosage or plan, acknowledge it to the patient clearly and apply it to your subsequent advice.
+- Never contradict a DOCTOR instruction. If it conflicts with a safety rule, surface a TRIAGE with alert_doctor=true and note the conflict in the summary.
+- DOCTOR lines are not patient messages — do not apply affirmation/negation or pending-fact logic to them.
+
 # ENHANCED RESPONSE GUIDELINES
 
 URGENCY-RESPONSE MAPPING (always match the tone to the urgency you assign):
@@ -2036,7 +2104,13 @@ async def _build_patient_context(patient: Dict[str, Any]) -> str:
 
 async def _followup_llm_call(patient: Dict[str, Any], history: List[Dict[str, Any]], user_text: str, language: str = "en") -> str:
     context = await _build_patient_context(patient)
-    prior = "\n".join([f"{'PATIENT' if m['role'] == 'user' else 'CARE_AI'}: {m['text']}" for m in (history or [])])
+    def _history_label(m: Dict[str, Any]) -> str:
+        r = m.get("role", "")
+        if r == "user":    return "PATIENT"
+        if r == "doctor":  return "DOCTOR"
+        if r == "system":  return "SYSTEM"
+        return "CARE_AI"
+    prior = "\n".join([f"{_history_label(m)}: {m['text']}" for m in (history or [])])
     lang_name = LANGUAGE_NAMES.get(language, "English")
     lang_rule = (
         f"\n\n# LANGUAGE RULE\nThe patient's preferred language is {lang_name}. "
@@ -2052,12 +2126,7 @@ async def _followup_llm_call(patient: Dict[str, Any], history: List[Dict[str, An
         + "\n\n# PATIENT RECORD\n" + context
         + ("\n\n# PRIOR FOLLOW-UP CHAT\n" + prior if prior else "")
     )
-    chat = LlmChat(
-        api_key=EMERGENT_LLM_KEY,
-        session_id=f"followup-{patient['id']}-{uuid.uuid4().hex[:8]}",
-        system_message=system,
-    ).with_model("openai", "gpt-4o")
-    return await chat.send_message(UserMessage(text=user_text))
+    return await _llm(system, user_text)
 
 
 # ============================================================
@@ -2160,12 +2229,7 @@ async def support_chat(payload: SupportChatBody, user: User = Depends(get_curren
     if chat_history_text:
         system += "\n\n# PRIOR CONVERSATION\n" + chat_history_text
 
-    chat = LlmChat(
-        api_key=EMERGENT_LLM_KEY,
-        session_id=f"support-{user.user_id}-{uuid.uuid4().hex[:6]}",
-        system_message=system,
-    ).with_model("openai", "gpt-4o")
-    reply = await chat.send_message(UserMessage(text=payload.message))
+    reply = await _llm(system, payload.message)
     return {"reply": (reply or "").strip(), "mode": "support"}
 
 
@@ -2721,11 +2785,20 @@ async def followup_message(payload: FollowupMessageBody, user: User = Depends(ge
 
     history = await db.followup_chats.find({"patient_id": payload.patient_id}, {"_id": 0}).sort("created_at", 1).to_list(200)
 
-    u_doc = {
+    actor_role = "doctor" if user.role in ("doctor", "admin") else "user"
+    u_doc: Dict[str, Any] = {
         "id": str(uuid.uuid4()), "patient_id": payload.patient_id,
-        "role": "user", "text": payload.message, "created_at": _now_iso(),
+        "role": actor_role, "text": payload.message, "created_at": _now_iso(),
     }
+    if actor_role == "doctor":
+        u_doc["sender_name"] = user.name
     await db.followup_chats.insert_one(u_doc.copy()); u_doc.pop("_id", None)
+
+    # Doctor messages are stored and returned immediately — they are direct
+    # clinical instructions, not patient queries, so patient-facing LLM logic
+    # (pending facts, safety check, triage, alert lifecycle) does not apply.
+    if actor_role == "doctor":
+        return {"user": u_doc, "assistant": None, "alert": None}
 
     # Phase 21 — Pending-fact confirmation (BEFORE we burn an LLM call).
     # If the patient has any `pending_facts` AND the current message is a clear
@@ -3096,14 +3169,14 @@ async def tts(payload: TTSBody, user: User = Depends(get_current_user)):
     # OpenAI TTS hard limit is 4096 chars
     text = text[:4000]
     try:
-        tts_client = OpenAITextToSpeech(api_key=EMERGENT_LLM_KEY)
-        audio_bytes = await tts_client.generate_speech(
-            text=text,
+        resp = await openai_client.audio.speech.create(
             model="tts-1",
             voice=payload.voice or "nova",
+            input=text,
             speed=max(0.5, min(1.5, payload.speed or 1.0)),
             response_format="mp3",
         )
+        audio_bytes = resp.content
     except Exception as e:
         logging.exception("TTS failed")
         raise HTTPException(status_code=502, detail=f"TTS failed: {e}")
@@ -3323,12 +3396,7 @@ async def _care_ai_intake(patient: Dict[str, Any], history: List[Dict[str, Any]]
         + "\n\n# PATIENT RECORD\n" + context
         + ("\n\n# PRIOR INTAKE\n" + prior if prior else "")
     )
-    chat = LlmChat(
-        api_key=EMERGENT_LLM_KEY,
-        session_id=f"intake-{patient['id']}-{uuid.uuid4().hex[:8]}",
-        system_message=system,
-    ).with_model("openai", "gpt-4o")
-    return await chat.send_message(UserMessage(text=user_text))
+    return await _llm(system, user_text)
 
 
 async def _care_ai_live(patient: Dict[str, Any], intake_summary: Dict[str, Any], history: List[Dict[str, Any]], user_text: str) -> str:
@@ -3340,24 +3408,14 @@ async def _care_ai_live(patient: Dict[str, Any], intake_summary: Dict[str, Any],
         + "\n\n# INTAKE SUMMARY\n" + json.dumps(intake_summary or {}, default=str)
         + ("\n\n# CONVERSATION SO FAR\n" + prior if prior else "")
     )
-    chat = LlmChat(
-        api_key=EMERGENT_LLM_KEY,
-        session_id=f"live-{uuid.uuid4().hex[:8]}",
-        system_message=system,
-    ).with_model("openai", "gpt-4o")
-    return await chat.send_message(UserMessage(text=user_text))
+    return await _llm(system, user_text)
 
 
 async def _care_ai_summarize(patient: Dict[str, Any], session: Dict[str, Any]) -> Dict[str, Any]:
     transcript = "\n".join([f"{m['role'].upper()}: {m['text']}" for m in (session.get('messages') or [])])
     context = await _build_patient_context(patient)
     system = SUMMARY_SYSTEM + "\n\n# PATIENT RECORD\n" + context
-    chat = LlmChat(
-        api_key=EMERGENT_LLM_KEY,
-        session_id=f"summ-{session['id']}",
-        system_message=system,
-    ).with_model("openai", "gpt-4o")
-    raw = await chat.send_message(UserMessage(text="Transcript:\n" + transcript))
+    raw = await _llm(system, "Transcript:\n" + transcript)
     # Tolerant JSON extraction
     try:
         m = re.search(r"\{.*\}", raw, re.DOTALL)
@@ -3373,12 +3431,7 @@ async def _care_ai_explain_rx(patient: Dict[str, Any], prescription: List[Dict[s
     sys_msg = EXPLAIN_RX_SYSTEM
     if language and language != "en":
         sys_msg = sys_msg + f"\n\nIMPORTANT: Reply ENTIRELY in {lang_name}. Use the patient's native script."
-    chat = LlmChat(
-        api_key=EMERGENT_LLM_KEY,
-        session_id=f"rx-{patient['id']}-{uuid.uuid4().hex[:8]}",
-        system_message=sys_msg,
-    ).with_model("openai", "gpt-4o")
-    return await chat.send_message(UserMessage(text="Prescription:\n" + json.dumps(prescription, indent=2)))
+    return await _llm(sys_msg, "Prescription:\n" + json.dumps(prescription, indent=2))
 
 
 
@@ -3941,15 +3994,11 @@ async def _send_consultation_to_whatsapp(patient_id: str, summary: Dict[str, Any
         if ps and wa_lang and wa_lang != "en":
             try:
                 lang_name = LANGUAGE_NAMES.get(wa_lang, "English")
-                t_chat = LlmChat(
-                    api_key=EMERGENT_LLM_KEY,
-                    session_id=f"trans-{uuid.uuid4().hex[:6]}",
-                    system_message=(
-                        f"Translate the user's text into {lang_name}. Use the native script. "
-                        "Keep medical terms accurate. Reply with ONLY the translation, no preface."
-                    ),
-                ).with_model("openai", "gpt-4o")
-                ps = await t_chat.send_message(UserMessage(text=ps))
+                ps = await _llm(
+                    f"Translate the user's text into {lang_name}. Use the native script. "
+                    "Keep medical terms accurate. Reply with ONLY the translation, no preface.",
+                    ps,
+                )
             except Exception:
                 logger.warning("WhatsApp summary translation failed — sending in original language")
 
@@ -4084,16 +4133,19 @@ async def _vision_interpret_image(patient: Dict[str, Any], data: bytes, content_
     """
     try:
         b64 = _b64.b64encode(data).decode()
-        from emergentintegrations.llm.chat import ImageContent  # local import — optional dep
-        chat = LlmChat(
-            api_key=EMERGENT_LLM_KEY,
-            session_id=f"vision-{uuid.uuid4().hex[:8]}",
-            system_message=VISION_SYSTEM + "\n\n# PATIENT RECORD\n" + (await _build_patient_context(patient)),
-        ).with_model("openai", "gpt-4o")
-        raw = await chat.send_message(UserMessage(
-            text="Please interpret this image per the OUTPUT contract.",
-            file_contents=[ImageContent(image_base64=b64)],
-        ))
+        vision_system = VISION_SYSTEM + "\n\n# PATIENT RECORD\n" + (await _build_patient_context(patient))
+        vision_resp = await openai_client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": vision_system},
+                {"role": "user", "content": [
+                    {"type": "text", "text": "Please interpret this image per the OUTPUT contract."},
+                    {"type": "image_url", "image_url": {"url": f"data:{content_type};base64,{b64}"}},
+                ]},
+            ],
+            max_tokens=2000,
+        )
+        raw = vision_resp.choices[0].message.content or ""
         try:
             return json.loads(_strip_json_fence(raw or "").strip())
         except Exception:
@@ -4602,12 +4654,7 @@ async def copilot_voice(file: UploadFile = File(...), patient_id: str = Form("")
         "Rules: do NOT invent meds the doctor did not name; preserve dose/frequency/duration verbatim where stated; "
         "use BID/TID/QID for frequencies; default duration to '5 days' when unstated; max 6 items."
     )
-    chat = LlmChat(
-        api_key=EMERGENT_LLM_KEY,
-        session_id=f"copilot-voice-{uuid.uuid4().hex[:8]}",
-        system_message=system,
-    ).with_model("openai", "gpt-4o")
-    raw_reply = await chat.send_message(UserMessage(text=f"Doctor said:\n{transcript}"))
+    raw_reply = await _llm(system, f"Doctor said:\n{transcript}")
     parsed_json = _strip_json_fence(raw_reply or "")
     try:
         data = json.loads(parsed_json)
@@ -4707,12 +4754,7 @@ async def quick_prescribe_draft(payload: QuickRxDraftBody, user: User = Depends(
         "Draft a prescription per the OUTPUT contract."
     )
 
-    chat = LlmChat(
-        api_key=EMERGENT_LLM_KEY,
-        session_id=f"rx-draft-{uuid.uuid4().hex[:8]}",
-        system_message=system,
-    ).with_model("openai", "gpt-4o")
-    raw = await chat.send_message(UserMessage(text=user_text))
+    raw = await _llm(system, user_text)
     raw = _strip_json_fence(raw or "")
 
     try:
@@ -4793,12 +4835,7 @@ async def rx_ai_guidance(payload: RxGuidanceBody, user: User = Depends(get_curre
         f"RECENT CARE-AI / PATIENT CHAT (most recent last):\n{recent or '(no recent chat)'}\n\n"
         "Suggest gaps per the OUTPUT contract."
     )
-    chat = LlmChat(
-        api_key=EMERGENT_LLM_KEY,
-        session_id=f"rx-guidance-{uuid.uuid4().hex[:8]}",
-        system_message=system,
-    ).with_model("openai", "gpt-4o")
-    raw = await chat.send_message(UserMessage(text=user_text))
+    raw = await _llm(system, user_text)
     raw = _strip_json_fence(raw or "")
     try:
         data = json.loads(raw)
@@ -5785,12 +5822,7 @@ async def alert_copilot(alert_id: str, user: User = Depends(get_current_user)):
     )
 
     try:
-        chat = LlmChat(
-            api_key=EMERGENT_LLM_KEY,
-            session_id=f"alert-copilot-{uuid.uuid4().hex[:8]}",
-            system_message=system,
-        ).with_model("openai", "gpt-4o")
-        raw = await chat.send_message(UserMessage(text=user_text))
+        raw = await _llm(system, user_text)
         raw = _strip_json_fence(raw or "")
         data = json.loads(raw)
     except Exception:
