@@ -1,6 +1,7 @@
-# PROJECT CARE AI
+# PROJECT CARE AI — MASTER PRODUCT ARCHITECTURE
 
-# MASTER PRODUCT ARCHITECTURE v1.0
+**Version:** 1.1
+**Status:** Living document — updated each sprint
 
 ---
 
@@ -101,9 +102,7 @@ Layer 5 → Longitudinal Intelligence
 
 ---
 
-# LAYER 1
-
-# PATIENT IDENTITY SYSTEM
+# LAYER 1 — PATIENT IDENTITY SYSTEM
 
 ## Purpose
 
@@ -180,6 +179,57 @@ Relationship
 
 ---
 
+## PROFILE COMPLETENESS ENGINE
+
+Profile completeness is a score from 0–100 used to measure how much CARE AI knows about a patient.
+
+Scoring formula:
+
+| Field                     | Points |
+|---------------------------|--------|
+| Name                      | 20     |
+| Date of Birth (DOB)       | 15     |
+| Gender                    | 10     |
+| Height + Weight (BMI-ready) | 15   |
+| Blood Group               | 10     |
+| Conditions recorded       | 10     |
+| Medications recorded      | 10     |
+| Allergies recorded        | 10     |
+
+Maximum: 100 points.
+
+A profile at < 50% completeness should prompt the patient to add missing fields before consultation.
+
+---
+
+## BMI CALCULATION RULES
+
+BMI is derived automatically when both height (cm) and weight (kg) are recorded.
+
+Formula: BMI = weight_kg / (height_m)²
+
+BMI is recalculated on every profile update that changes height or weight.
+
+BMI is stored on the profile and surfaced in:
+
+* Profile card
+* Consultation profile step
+* Doctor clinical handoff
+
+---
+
+## DOB → AGE DERIVATION
+
+Age is never entered manually if DOB is available.
+
+Age is derived dynamically from DOB using: age = current_year − birth_year (accounting for month/day).
+
+If DOB is stored, the system always derives age at runtime.
+
+Manual age entry is only used as fallback when DOB is unknown.
+
+---
+
 # MEMORY HIERARCHY
 
 ## Level 1
@@ -227,9 +277,7 @@ Contextual Memory
 
 ---
 
-# LAYER 2
-
-# CONSULTATION OPERATING SYSTEM
+# LAYER 2 — CONSULTATION OPERATING SYSTEM
 
 ## Core Flow
 
@@ -312,9 +360,7 @@ Doctor should understand the case within 1–2 minutes.
 
 ---
 
-# LAYER 3
-
-# DOCTOR WORKSPACE
+# LAYER 3 — DOCTOR WORKSPACE
 
 ## Purpose
 
@@ -357,9 +403,7 @@ Right Panel
 
 ---
 
-# LAYER 4
-
-# HEALTH RECORD VAULT
+# LAYER 4 — HEALTH RECORD VAULT
 
 ## Purpose
 
@@ -402,9 +446,7 @@ Patient should be able to review history at any time.
 
 ---
 
-# LAYER 5
-
-# LONGITUDINAL INTELLIGENCE
+# LAYER 5 — LONGITUDINAL INTELLIGENCE
 
 ## Purpose
 
@@ -591,18 +633,51 @@ Deliverables:
 * Risk Engine
 * Deterioration Detection
 * Care Coordination
-cd ~/Downloads/projectcareai-main
-wc -l CARE_AI_ARCHITECTURE.md
-git add CARE_AI_ARCHITECTURE.md
-git commit -m "docs: CARE AI master architecture v1.0
 
-- CARE AI role definition
-- Conversational design principles
-- Clinical safety principles
-- Complete layer architecture (Identity, Consultation, Doctor, Admin, Health Record, Intelligence)
-- Doctor workspace principles
-- Admin operations center
-- Health record vault and timeline
-- Longitudinal intelligence engine
-- Full sprint roadmap 2.1 through 6"
-git push origin main
+---
+
+# IMPLEMENTATION NOTES
+
+## Profile Data Model
+
+Each profile document contains:
+
+```
+personal_info:
+  name          (required)
+  dob           (ISO date string, e.g. "1990-04-15")
+  age           (derived from dob at runtime; fallback manual entry)
+  gender        (male | female | other | prefer_not_to_say)
+  height_cm     (float)
+  weight_kg     (float)
+  bmi           (derived: weight_kg / (height_m)²)
+  blood_group   (A+ | A- | B+ | B- | AB+ | AB- | O+ | O-)
+
+relationship    (self | mother | father | spouse | child | sibling | family | guest)
+profile_completeness  (0–100 integer, recalculated on every update)
+medical_history:
+  allergies      []
+  current_conditions  []
+  current_medications []
+medical_facts   (confirmed structured clinical facts)
+pending_facts   (unconfirmed suggestions from AI)
+```
+
+## Consultation Flow
+
+Step 0: Profile selection (who is this consultation for?)
+Step 1: Department selection
+Step 2: Doctor selection
+Step 3: Date + time slot
+Step 4: Reason / chief complaint
+→ Appointment created → CARE AI intake begins
+
+## Clinical Safety
+
+CARE AI never invents:
+* Diagnoses
+* Prescriptions
+* Medication dosages
+* Doctor instructions
+
+All clinical decisions require doctor confirmation.
