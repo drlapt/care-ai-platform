@@ -69,14 +69,34 @@ export default function PatientPortal() {
   const upcoming = appts.filter((a) => ["scheduled", "requested"].includes(a.status)).slice(0, 3);
   const reschedules = appts.filter((a) => a.status === "rescheduled" && a.proposed_date && a.proposed_time);
   const consultations = (patient.consultations || []).slice().reverse();
-  const allergies = (mh.allergies || []).filter(Boolean);
+  // Allergies — support both structured dicts (Sprint 2.2) and legacy strings
+  const allergies = (mh.allergies || [])
+    .map((a) => (typeof a === "object" && a !== null ? a.substance : a))
+    .filter(Boolean);
 
   // Phase 16 — pending safety check on the most recent consult that has one
   const pendingSafetyRxId = consultations.find((c) => {
     const sc = c.safety_check;
     return sc && (sc.status === "pending" || sc.status === "partial" || sc.status === "hold");
   })?.id;
-  const conditions = (mh.current_conditions || []).map((c) => typeof c === "string" ? c : c.condition).filter(Boolean);
+
+  // Conditions — merge structured (Sprint 2.2) and legacy, deduplicated
+  const structuredCondNames = (mh.conditions || [])
+    .filter((c) => typeof c === "object" && c !== null && c.name)
+    .map((c) => c.name);
+  const legacyCondNames = (mh.current_conditions || [])
+    .map((c) => (typeof c === "string" ? c : c?.condition))
+    .filter(Boolean);
+  const conditions = [...new Set([...structuredCondNames, ...legacyCondNames])];
+
+  // Medications — merge structured (Sprint 2.2) and legacy for snapshot count
+  const structuredMedNames = (mh.medications || [])
+    .filter((m) => typeof m === "object" && m !== null && m.name)
+    .map((m) => m.name);
+  const legacyMedNames = (mh.current_medications || [])
+    .map((m) => (typeof m === "string" ? m : m?.name || m?.medication))
+    .filter(Boolean);
+  const snapshotMedications = [...new Set([...structuredMedNames, ...legacyMedNames])];
   const lastVisit = consultations[0]?.date ? new Date(consultations[0].date).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : null;
   const activeRx = rx.slice(0, 4);
   const otherProfiles = (profiles || []).filter((p) => p.id !== user?.linked_patient_id);
@@ -284,8 +304,9 @@ export default function PatientPortal() {
               <div className="text-[11.5px]" style={{ color: "#6B7595" }}>Care AI is keeping these on file</div>
             </div>
           </header>
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-3 gap-2">
             <Stat label="Conditions" count={conditions.length} accent="#5B7CFA" />
+            <Stat label="Medications" count={snapshotMedications.length} accent="#28A55B" />
             <Stat label="Allergies" count={allergies.length} accent={allergies.length ? "#E85A5A" : "#6B7595"} danger={allergies.length > 0} />
           </div>
           {allergies.length > 0 && (
