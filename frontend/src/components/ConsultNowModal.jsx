@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { X, Calendar, Stethoscope, Send, ChevronRight, ChevronLeft, Award, Star, Loader2, CheckCircle2, AlertTriangle, Plus, UserPlus } from "lucide-react";
+import { X, Calendar, Stethoscope, Send, ChevronRight, ChevronLeft, Award, Star, Loader2, CheckCircle2, AlertTriangle, Plus, UserPlus, RefreshCw } from "lucide-react";
 import { createAppointment, listDoctors, doctorAvailability, listProfiles } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
 
 function ProfileCategoryDots({ profile }) {
   const idOk = !!(profile.name && (profile.dob || profile.age != null) && profile.gender);
@@ -47,9 +48,12 @@ const REL_COLOR = { self: "#5B7CFA", mother: "#E573A0", father: "#3B82F6", child
 
 export default function ConsultNowModal({ onClose, onBooked }) {
   const navigate = useNavigate();
-  const [step, setStep] = useState(0);
+  const { user } = useAuth();
+  // Pre-populate from dashboard active profile; skip step 0 when available
+  const activeProfileId = user?.linked_patient_id || null;
+  const [step, setStep] = useState(activeProfileId ? 1 : 0);
   const [profiles, setProfiles] = useState([]);
-  const [selectedPatientId, setSelectedPatientId] = useState(null);
+  const [selectedPatientId, setSelectedPatientId] = useState(activeProfileId);
   const [loadingProfiles, setLoadingProfiles] = useState(true);
   const [departments, setDepartments] = useState([]);
   const [doctors, setDoctors] = useState([]);
@@ -64,16 +68,21 @@ export default function ConsultNowModal({ onClose, onBooked }) {
   const [reason, setReason] = useState("");
   const [saving, setSaving] = useState(false);
 
-  // Load profiles on mount
+  // Load profiles — always, so "Change profile" can show the full list
   useEffect(() => {
     listProfiles()
       .then((d) => {
         const profs = d.profiles || [];
         setProfiles(profs);
-        if (profs.length === 1) setSelectedPatientId(profs[0].id);
+        // If no active profile yet, select the first one and stay at step 0
+        if (!activeProfileId && profs.length === 1) {
+          setSelectedPatientId(profs[0].id);
+          setStep(1);
+        }
       })
       .catch(() => {})
       .finally(() => setLoadingProfiles(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Load doctors when modal opens / department changes
@@ -164,7 +173,30 @@ export default function ConsultNowModal({ onClose, onBooked }) {
             </div>
             <div>
               <div className="font-display font-bold text-[20px]" style={{ color: "#0F1836" }}>Consult a Doctor</div>
-              <div className="text-[12.5px]" style={{ color: "#6B7595" }}>Step {step + 1} of {STEPS.length} · {STEPS[step]}</div>
+              {/* Show active profile name + change link when step 0 is skipped */}
+              {step > 0 && selectedPatientId && profiles.length > 0 ? (() => {
+                const sel = profiles.find((p) => p.id === selectedPatientId);
+                return sel ? (
+                  <div className="flex items-center gap-1.5 text-[12px]" style={{ color: "#6B7595" }}>
+                    <span>For <span className="font-semibold" style={{ color: "#0F1836" }}>{sel.name}</span></span>
+                    {profiles.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => setStep(0)}
+                        className="inline-flex items-center gap-0.5 font-semibold"
+                        style={{ color: "#5B7CFA" }}
+                        data-testid="consult-change-profile"
+                      >
+                        <RefreshCw size={10} /> Change
+                      </button>
+                    )}
+                  </div>
+                ) : <div className="text-[12.5px]" style={{ color: "#6B7595" }}>Step {step} of {STEPS.length - 1}</div>;
+              })() : (
+                <div className="text-[12.5px]" style={{ color: "#6B7595" }}>
+                  {step === 0 ? "Select who this is for" : `Step ${step} of ${STEPS.length - 1}`}
+                </div>
+              )}
             </div>
           </div>
           <button type="button" onClick={onClose} className="w-8 h-8 rounded-full bg-white/70 hover:bg-white transition flex items-center justify-center" data-testid="consult-modal-close">
@@ -172,18 +204,13 @@ export default function ConsultNowModal({ onClose, onBooked }) {
           </button>
         </div>
 
-        {/* Stepper bar */}
+        {/* Stepper bar — 4 steps when profile is pre-selected, 5 when shown */}
         <div className="flex items-center gap-1.5">
           {STEPS.map((_, i) => (
             <div key={i} className={`h-1 flex-1 rounded-full ${i <= step ? "bg-gradient-to-r from-[#5B7CFA] to-[#7C4DFF]" : "bg-[#5B7CFA]/15"}`} />
           ))}
         </div>
 
-        {/* STEP 0: Profile selection */}
-        {/* TODO Sprint 2.3 UX:
-            Remove double profile selection.
-            Dashboard active profile should automatically populate booking.
-            User should select profile only once. */}
         {step === 0 && (
           <div className="flex flex-col gap-3" data-testid="step-profile">
             <div className="font-semibold text-[15px]" style={{ color: "#0F1836" }}>Who is this consultation for?</div>
