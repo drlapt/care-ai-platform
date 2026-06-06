@@ -1,6 +1,7 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { X, Save, Loader2, User, Ruler, Weight, Droplets, Calendar, Check } from "lucide-react";
+import { X, Save, Loader2, User, Ruler, Weight, Droplets, Calendar, Check, ClipboardList } from "lucide-react";
 import { updateProfile } from "@/lib/api";
 
 const BLOOD_GROUPS = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"];
@@ -72,6 +73,7 @@ function CompletenessStatus({ form, profile }) {
 }
 
 export default function ProfileEditModal({ profile, onClose, onSaved }) {
+  const navigate = useNavigate();
   const [form, setForm] = useState({
     name: profile?.name || "",
     dob: profile?.dob || "",
@@ -224,6 +226,19 @@ export default function ProfileEditModal({ profile, onClose, onSaved }) {
             </div>
           )}
         </fieldset>
+
+        {/* Health record link */}
+        {profile?.id && (
+          <button
+            type="button"
+            onClick={() => { onClose(); navigate(`/profiles/${profile.id}/health-record`); }}
+            className="w-full text-[13px] font-semibold py-2.5 rounded-2xl border transition hover:opacity-80 inline-flex items-center justify-center gap-2"
+            style={{ borderColor: "rgba(91,124,250,0.3)", color: "#5B7CFA", background: "rgba(91,124,250,0.06)" }}
+            data-testid="edit-manage-health-record"
+          >
+            <ClipboardList size={14} /> Manage conditions, medications &amp; allergies
+          </button>
+        )}
 
         {/* Footer */}
         <div className="flex items-center gap-2 pt-1">

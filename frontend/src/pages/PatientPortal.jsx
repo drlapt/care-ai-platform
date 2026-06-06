@@ -238,7 +238,9 @@ export default function PatientPortal() {
                 <div className="flex items-center gap-1 flex-wrap justify-center mt-0.5">
                   <CategoryDot label="Identity" done={idOk} />
                   <CategoryDot label="Vitals" done={vitalsOk} />
-                  <CategoryDot label="Health" done={hrOk} />
+                  <Link to={`/profiles/${p.id}/health-record`} title="Manage health record" onClick={(e) => e.stopPropagation()}>
+                    <CategoryDot label="Health" done={hrOk} />
+                  </Link>
                 </div>
                 {sel && <span className="badge badge-success !py-0 text-[9.5px]">Active</span>}
               </div>
@@ -300,6 +302,16 @@ export default function PatientPortal() {
                 ))}
               </div>
             </div>
+          )}
+          {conditions.length === 0 && allergies.length === 0 && user?.linked_patient_id && (
+            <Link
+              to={`/profiles/${user.linked_patient_id}/health-record`}
+              className="text-[12.5px] font-semibold inline-flex items-center gap-1"
+              style={{ color: "#5B7CFA" }}
+              data-testid="snapshot-add-conditions-link"
+            >
+              + Add your health conditions →
+            </Link>
           )}
           <div className="flex items-center justify-between text-[12px] pt-1" style={{ color: "#6B7595" }}>
             <span>Last visit</span>
