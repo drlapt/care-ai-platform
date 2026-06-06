@@ -9,7 +9,7 @@ import {
   getHealthRecord,
   addCondition, deleteCondition, patchCondition,
   addMedication, deleteMedication, patchMedication,
-  addAllergy, deleteAllergy,
+  addAllergy, patchAllergy, deleteAllergy,
 } from "@/lib/api";
 
 const FREQ_OPTIONS = [
@@ -56,14 +56,19 @@ function Badge({ label, color }) {
 
 function ConditionCard({ cond, profileId, onUpdated, onDeleted }) {
   const [editing, setEditing] = useState(false);
+  const [name, setName] = useState(cond.name || "");
   const [status, setStatus] = useState(cond.status || "active");
+  const [diagDate, setDiagDate] = useState(cond.diagnosis_date || "");
   const [notes, setNotes] = useState(cond.notes || "");
   const [busy, setBusy] = useState(false);
 
   const handleSave = async () => {
+    if (!name.trim()) { toast.error("Condition name is required"); return; }
     setBusy(true);
     try {
-      const res = await patchCondition(profileId, cond.id, { status, notes: notes || null });
+      const res = await patchCondition(profileId, cond.id, {
+        name: name.trim(), status, diagnosis_date: diagDate || null, notes: notes || null,
+      });
       toast.success("Updated");
       onUpdated(res);
       setEditing(false);
@@ -112,9 +117,14 @@ function ConditionCard({ cond, profileId, onUpdated, onDeleted }) {
       )}
       {editing && (
         <div className="flex flex-col gap-2 pt-1">
-          <select className="input text-[13px]" value={status} onChange={(e) => setStatus(e.target.value)}>
-            {CONDITION_STATUSES.map((s) => <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>)}
-          </select>
+          <input className="input text-[13px]" placeholder="Condition name *" value={name} onChange={(e) => setName(e.target.value)} />
+          <div className="grid grid-cols-2 gap-2">
+            <select className="input text-[13px]" value={status} onChange={(e) => setStatus(e.target.value)}>
+              {CONDITION_STATUSES.map((s) => <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>)}
+            </select>
+            <input className="input text-[13px]" type="date" value={diagDate} onChange={(e) => setDiagDate(e.target.value)}
+              max={new Date().toISOString().slice(0, 10)} placeholder="Diagnosis date" />
+          </div>
           <textarea className="input text-[13px]" rows={2} placeholder="Notes (optional)" value={notes} onChange={(e) => setNotes(e.target.value)} />
           <div className="flex gap-2">
             <button type="button" onClick={() => setEditing(false)} className="btn-ghost flex-1 text-[13px] py-1.5">Cancel</button>
@@ -316,8 +326,29 @@ function AddMedicationForm({ profileId, onAdded, onCancel }) {
 
 // ── Allergies Section ──────────────────────────────────────────────────────
 
-function AllergyCard({ allergy, profileId, onDeleted }) {
+function AllergyCard({ allergy, profileId, onUpdated, onDeleted }) {
+  const [editing, setEditing] = useState(false);
+  const [substance, setSubstance] = useState(allergy.substance || "");
+  const [reaction, setReaction] = useState(allergy.reaction || "");
+  const [severity, setSeverity] = useState(allergy.severity || "");
   const [busy, setBusy] = useState(false);
+
+  const handleSave = async () => {
+    if (!substance.trim()) { toast.error("Substance is required"); return; }
+    setBusy(true);
+    try {
+      const res = await patchAllergy(profileId, allergy.id, {
+        substance: substance.trim(), reaction: reaction || null, severity: severity || null,
+      });
+      toast.success("Updated");
+      onUpdated(res);
+      setEditing(false);
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Could not update");
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const handleDelete = async () => {
     if (!window.confirm(`Remove allergy to "${allergy.substance}"?`)) return;
@@ -335,19 +366,44 @@ function AllergyCard({ allergy, profileId, onDeleted }) {
 
   const sev = (allergy.severity || "").toLowerCase();
   return (
-    <div className="glass-soft px-4 py-3 flex items-start gap-3 rounded-2xl">
-      <div className="flex-1">
-        <div className="font-semibold text-[14px]" style={{ color: "#0F1836" }}>{allergy.substance}</div>
-        {allergy.reaction && (
-          <div className="text-[12.5px] mt-0.5" style={{ color: "#6B7595" }}>{allergy.reaction}</div>
-        )}
+    <div className="glass-soft px-4 py-3 flex flex-col gap-2 rounded-2xl">
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex-1">
+          <div className="font-semibold text-[14px]" style={{ color: "#0F1836" }}>{allergy.substance}</div>
+          {allergy.reaction && !editing && (
+            <div className="text-[12.5px] mt-0.5" style={{ color: "#6B7595" }}>{allergy.reaction}</div>
+          )}
+        </div>
+        <div className="flex items-center gap-1.5">
+          {sev && !editing && <Badge label={sev} color={SEVERITY_COLORS[sev] || "#9AA3BD"} />}
+          <button type="button" onClick={() => setEditing((e) => !e)} className="w-7 h-7 rounded-full glass-soft flex items-center justify-center hover:opacity-80">
+            <Pencil size={12} style={{ color: "#5B7CFA" }} />
+          </button>
+          <button type="button" onClick={handleDelete} disabled={busy} className="w-7 h-7 rounded-full glass-soft flex items-center justify-center hover:opacity-80">
+            {busy ? <Loader2 size={12} className="animate-spin" style={{ color: "#E85A5A" }} /> : <Trash2 size={12} style={{ color: "#E85A5A" }} />}
+          </button>
+        </div>
       </div>
-      <div className="flex items-center gap-1.5">
-        {sev && <Badge label={sev} color={SEVERITY_COLORS[sev] || "#9AA3BD"} />}
-        <button type="button" onClick={handleDelete} disabled={busy} className="w-7 h-7 rounded-full glass-soft flex items-center justify-center hover:opacity-80">
-          {busy ? <Loader2 size={12} className="animate-spin" style={{ color: "#E85A5A" }} /> : <Trash2 size={12} style={{ color: "#E85A5A" }} />}
-        </button>
-      </div>
+      {editing && (
+        <div className="flex flex-col gap-2 pt-1">
+          <input className="input text-[13px]" placeholder="Substance / allergen *" value={substance} onChange={(e) => setSubstance(e.target.value)} />
+          <div className="grid grid-cols-2 gap-2">
+            <input className="input text-[13px]" placeholder="Reaction (optional)" value={reaction} onChange={(e) => setReaction(e.target.value)} />
+            <select className="input text-[13px]" value={severity} onChange={(e) => setSeverity(e.target.value)}>
+              <option value="">Severity…</option>
+              <option value="mild">Mild</option>
+              <option value="moderate">Moderate</option>
+              <option value="severe">Severe</option>
+            </select>
+          </div>
+          <div className="flex gap-2">
+            <button type="button" onClick={() => setEditing(false)} className="btn-ghost flex-1 text-[13px] py-1.5">Cancel</button>
+            <button type="button" onClick={handleSave} disabled={busy} className="btn-primary flex-1 text-[13px] py-1.5 inline-flex items-center justify-center gap-1">
+              {busy ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} Save
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -520,7 +576,7 @@ export default function HealthRecord() {
             {openSection === "allergies" && (
               <div className="flex flex-col gap-2 pl-1">
                 {allergies.map((a) => (
-                  <AllergyCard key={a.id} allergy={a} profileId={profileId} onDeleted={applyUpdate} />
+                  <AllergyCard key={a.id} allergy={a} profileId={profileId} onUpdated={applyUpdate} onDeleted={applyUpdate} />
                 ))}
                 {allergies.length === 0 && !addingAllergy && (
                   <div className="text-[13px] text-center py-3" style={{ color: "#9AA3BD" }}>

@@ -169,6 +169,7 @@ export const addMedication = (profileId, payload) => api.post(`/profiles/${profi
 export const deleteMedication = (profileId, medicationId) => api.delete(`/profiles/${profileId}/medications/${medicationId}`).then((r) => r.data);
 export const patchMedication = (profileId, medicationId, payload) => api.patch(`/profiles/${profileId}/medications/${medicationId}`, payload).then((r) => r.data);
 export const addAllergy = (profileId, payload) => api.post(`/profiles/${profileId}/allergies`, payload).then((r) => r.data);
+export const patchAllergy = (profileId, allergyId, payload) => api.patch(`/profiles/${profileId}/allergies/${allergyId}`, payload).then((r) => r.data);
 export const deleteAllergy = (profileId, allergyId) => api.delete(`/profiles/${profileId}/allergies/${allergyId}`).then((r) => r.data);
 
 // Phase 13 — Autonomous co-pilot + WhatsApp activity

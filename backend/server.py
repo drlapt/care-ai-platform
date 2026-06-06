@@ -2728,6 +2728,7 @@ class ConditionCreate(BaseModel):
 
 
 class ConditionPatch(BaseModel):
+    name: Optional[str] = None
     status: Optional[str] = None
     notes: Optional[str] = None
     diagnosis_date: Optional[str] = None
@@ -2753,6 +2754,12 @@ class AllergyCreate(BaseModel):
     substance: str
     reaction: Optional[str] = None
     severity: Optional[str] = None  # mild|moderate|severe
+
+
+class AllergyPatch(BaseModel):
+    substance: Optional[str] = None
+    reaction: Optional[str] = None
+    severity: Optional[str] = None
 
 
 def _profile_summary(p: Dict[str, Any]) -> Dict[str, Any]:
@@ -3209,6 +3216,10 @@ async def patch_condition(profile_id: str, condition_id: str, payload: Condition
     idx = next((i for i, c in enumerate(conditions) if isinstance(c, dict) and c.get("id") == condition_id), None)
     if idx is None:
         raise HTTPException(status_code=404, detail="Condition not found")
+    if payload.name is not None:
+        if not payload.name.strip():
+            raise HTTPException(status_code=400, detail="Condition name cannot be empty")
+        conditions[idx]["name"] = payload.name.strip()
     if payload.status is not None:
         sv = payload.status.lower()
         if sv not in _VALID_CONDITION_STATUSES:
@@ -3339,6 +3350,35 @@ async def add_allergy(profile_id: str, payload: AllergyCreate, user: User = Depe
         "created_at": _now_iso(),
     })
     mh["allergies"] = allergies
+    completeness = _calc_profile_completeness(pi, mh)
+    await db.patients.update_one({"id": profile_id}, {"$set": {
+        "medical_history": mh, "profile_completeness": completeness, "updated_at": _now_iso(),
+    }})
+    return _hr_response(mh, {"profile_completeness": completeness})
+
+
+@api_router.patch("/profiles/{profile_id}/allergies/{allergy_id}")
+async def patch_allergy(profile_id: str, allergy_id: str, payload: AllergyPatch, user: User = Depends(get_current_user)):
+    p = await _get_owned_profile(profile_id, user)
+    mh = dict(p.get("medical_history") or {})
+    allergies = [a for a in (mh.get("allergies") or []) if isinstance(a, dict)]
+    idx = next((i for i, a in enumerate(allergies) if a.get("id") == allergy_id), None)
+    if idx is None:
+        raise HTTPException(status_code=404, detail="Allergy not found")
+    if payload.substance is not None:
+        if not payload.substance.strip():
+            raise HTTPException(status_code=400, detail="Substance cannot be empty")
+        allergies[idx]["substance"] = payload.substance.strip()
+    if payload.reaction is not None:
+        allergies[idx]["reaction"] = payload.reaction or None
+    if payload.severity is not None:
+        sv = (payload.severity or "").lower().strip() or None
+        if sv and sv not in _VALID_ALLERGY_SEVERITIES:
+            raise HTTPException(status_code=400, detail=f"severity must be one of: {sorted(_VALID_ALLERGY_SEVERITIES)}")
+        allergies[idx]["severity"] = sv
+    allergies[idx]["updated_at"] = _now_iso()
+    mh["allergies"] = allergies
+    pi = p.get("personal_info") or {}
     completeness = _calc_profile_completeness(pi, mh)
     await db.patients.update_one({"id": profile_id}, {"$set": {
         "medical_history": mh, "profile_completeness": completeness, "updated_at": _now_iso(),
