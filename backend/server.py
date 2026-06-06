@@ -2626,7 +2626,13 @@ async def patch_profile(profile_id: str, payload: ProfilePatch, user: User = Dep
     pi = p.get("personal_info") or {}
     if payload.name is not None: pi["name"] = payload.name.strip()
     if payload.age is not None: pi["age"] = payload.age
+    if payload.dob is not None: pi["dob"] = payload.dob
     if payload.gender is not None: pi["gender"] = payload.gender
+    if payload.height_cm is not None: pi["height_cm"] = payload.height_cm
+    if payload.weight_kg is not None: pi["weight_kg"] = payload.weight_kg
+    if payload.height_cm and payload.weight_kg:
+        pi["bmi"] = round(payload.weight_kg / ((payload.height_cm / 100) ** 2), 1)
+    if payload.blood_group is not None: pi["blood_group"] = payload.blood_group
     update["personal_info"] = pi
     if payload.relationship is not None: update["relationship"] = payload.relationship
     update["updated_at"] = _now_iso()
