@@ -34,7 +34,7 @@ export default function ProfileSwitcher() {
   const [max, setMax] = useState(5);
   const [adding, setAdding] = useState(false);
   const [busy, setBusy] = useState(null);
-  const [form, setForm] = useState({ name: "", age: "", gender: "female", relationship: "family" });
+  const [form, setForm] = useState({ name: "", dob: "", age: "", gender: "female", relationship: "family", height_cm: "", weight_kg: "", blood_group: "" });
 
   const load = () => listProfiles().then((d) => {
     setProfiles(d.profiles || []);
@@ -71,13 +71,17 @@ export default function ProfileSwitcher() {
     try {
       await createProfile({
         name: form.name.trim(),
+        dob: form.dob || null,
         age: form.age ? Number(form.age) : null,
         gender: form.gender,
         relationship: form.relationship,
+        height_cm: form.height_cm ? Number(form.height_cm) : null,
+        weight_kg: form.weight_kg ? Number(form.weight_kg) : null,
+        blood_group: form.blood_group || null,
       });
       toast.success(`Added ${form.name}`);
       setAdding(false);
-      setForm({ name: "", age: "", gender: "female", relationship: "family" });
+      setForm({ name: "", dob: "", age: "", gender: "female", relationship: "family", height_cm: "", weight_kg: "", blood_group: "" });
       await load();
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Could not add profile");
@@ -194,11 +198,11 @@ export default function ProfileSwitcher() {
                 <div className="grid grid-cols-2 gap-2">
                   <input
                     className="input"
-                    placeholder="Age"
-                    type="number"
-                    value={form.age}
-                    onChange={(e) => setForm({ ...form, age: e.target.value })}
-                    data-testid="profile-add-age"
+                    placeholder="Date of birth"
+                    type="date"
+                    value={form.dob}
+                    onChange={(e) => setForm({ ...form, dob: e.target.value })}
+                    data-testid="profile-add-dob"
                   />
                   <select
                     className="input"
@@ -209,6 +213,41 @@ export default function ProfileSwitcher() {
                     <option value="female">Female</option>
                     <option value="male">Male</option>
                     <option value="other">Other</option>
+                    <option value="prefer_not_to_say">Prefer not to say</option>
+                  </select>
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  <input
+                    className="input"
+                    placeholder="Height (cm)"
+                    type="number"
+                    value={form.height_cm}
+                    onChange={(e) => setForm({ ...form, height_cm: e.target.value })}
+                    data-testid="profile-add-height"
+                  />
+                  <input
+                    className="input"
+                    placeholder="Weight (kg)"
+                    type="number"
+                    value={form.weight_kg}
+                    onChange={(e) => setForm({ ...form, weight_kg: e.target.value })}
+                    data-testid="profile-add-weight"
+                  />
+                  <select
+                    className="input"
+                    value={form.blood_group}
+                    onChange={(e) => setForm({ ...form, blood_group: e.target.value })}
+                    data-testid="profile-add-blood"
+                  >
+                    <option value="">Blood group</option>
+                    <option value="A+">A+</option>
+                    <option value="A-">A-</option>
+                    <option value="B+">B+</option>
+                    <option value="B-">B-</option>
+                    <option value="AB+">AB+</option>
+                    <option value="AB-">AB-</option>
+                    <option value="O+">O+</option>
+                    <option value="O-">O-</option>
                   </select>
                 </div>
                 <select
