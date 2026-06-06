@@ -192,7 +192,7 @@ export default function ConsultationSession() {
           if (mounted) { setSession(s); setSessionId(routeId); }
         } else if (appointmentId) {
           const existing = await getConsultationByAppt(appointmentId);
-          if (existing && existing.id) {
+          if (existing && existing.id && existing.exists !== false) {
             if (mounted) { setSession(existing); setSessionId(existing.id); navigate(`/consult/${existing.id}`, { replace: true }); }
           } else {
             const s = await startIntake(appointmentId, language || "en");
@@ -333,7 +333,7 @@ export default function ConsultationSession() {
     const overrideText = typeof textOverride === "string" ? textOverride : null;
     const text = ((overrideText ?? input) || "").trim();
     if (!text || sending || !session) return;
-    if (overrideText === null) setInput("");
+    if (overrideText === null) { setInput(""); stopListening(); }
     setPickedOptions([]); setOtherText("");
     setSending(true);
     try {

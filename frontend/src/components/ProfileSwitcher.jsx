@@ -144,6 +144,8 @@ export default function ProfileSwitcher() {
             {!adding && profiles.map((p) => {
               const c = REL_COLOR[p.relationship] || "#5B7CFA";
               const sel = p.id === activeId;
+              const pct = p.profile_completeness || 0;
+              const pctColor = pct >= 80 ? "#3CC97C" : pct >= 50 ? "#F2994A" : "#E85A5A";
               return (
                 <button
                   key={p.id}
@@ -165,7 +167,12 @@ export default function ProfileSwitcher() {
                     <div className="text-[11px] truncate" style={{ color: c }}>
                       {REL_LABEL[p.relationship] || "Profile"}
                       {p.age ? ` · ${p.age}y` : ""}
+                      {p.bmi ? ` · BMI ${p.bmi}` : ""}
                       {p.consultation_count ? ` · ${p.consultation_count} visit${p.consultation_count === 1 ? "" : "s"}` : ""}
+                    </div>
+                    {/* Completeness micro-bar */}
+                    <div className="h-0.5 rounded-full mt-1 overflow-hidden" style={{ background: "rgba(91,124,250,0.12)" }}>
+                      <div className="h-full rounded-full" style={{ width: `${pct}%`, background: pctColor }} />
                     </div>
                   </div>
                   {sel && <Check size={14} style={{ color: c }} />}

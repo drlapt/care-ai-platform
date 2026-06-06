@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { X, Calendar, Stethoscope, Send, ChevronRight, ChevronLeft, Award, Star, Loader2, CheckCircle2 } from "lucide-react";
+import { X, Calendar, Stethoscope, Send, ChevronRight, ChevronLeft, Award, Star, Loader2, CheckCircle2, AlertTriangle } from "lucide-react";
 import { createAppointment, listDoctors, doctorAvailability, listProfiles } from "@/lib/api";
 
 function todayISO() {
@@ -169,6 +169,9 @@ export default function ConsultNowModal({ onClose, onBooked }) {
                 {profiles.map((p) => {
                   const color = REL_COLOR[p.relationship] || "#5B7CFA";
                   const sel = p.id === selectedPatientId;
+                  const pct = p.profile_completeness || 0;
+                  const pctColor = pct >= 80 ? "#3CC97C" : pct >= 50 ? "#F2994A" : "#E85A5A";
+                  const lowProfile = pct < 40;
                   return (
                     <button
                       key={p.id}
@@ -180,12 +183,34 @@ export default function ConsultNowModal({ onClose, onBooked }) {
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="font-semibold text-[13.5px] truncate" style={{ color: "#0F1836" }}>{p.name}</div>
-                        <div className="text-[11.5px]" style={{ color: "#6B7595" }}>{REL_LABEL[p.relationship] || "Profile"}</div>
+                        <div className="text-[11.5px] flex items-center gap-2" style={{ color: "#6B7595" }}>
+                          <span>{REL_LABEL[p.relationship] || "Profile"}</span>
+                          {p.age ? <span>· {p.age}y</span> : null}
+                          {p.bmi ? <span>· BMI {p.bmi}</span> : null}
+                        </div>
+                        {/* Completeness mini-bar */}
+                        <div className="flex items-center gap-1.5 mt-1">
+                          <div className="flex-1 h-1 rounded-full overflow-hidden" style={{ background: "rgba(91,124,250,0.12)" }}>
+                            <div className="h-full rounded-full" style={{ width: `${pct}%`, background: pctColor }} />
+                          </div>
+                          <span className="text-[9.5px] font-bold" style={{ color: pctColor }}>{pct}%</span>
+                        </div>
                       </div>
                       {sel && <div className="w-4 h-4 rounded-full bg-[#5B7CFA] flex items-center justify-center"><div className="w-2 h-2 rounded-full bg-white" /></div>}
                     </button>
                   );
                 })}
+                {/* Low completeness warning for selected profile */}
+                {(() => {
+                  const sel = profiles.find((p) => p.id === selectedPatientId);
+                  if (!sel || (sel.profile_completeness || 0) >= 40) return null;
+                  return (
+                    <div className="flex items-start gap-2 px-3 py-2.5 rounded-xl text-[12px]" style={{ background: "rgba(242,153,74,0.10)", color: "#7A4200" }}>
+                      <AlertTriangle size={14} className="shrink-0 mt-0.5" style={{ color: "#F2994A" }} />
+                      <span>This profile is incomplete. Care AI will know less about <strong>{sel.name}</strong> during intake. Consider editing the profile first.</span>
+                    </div>
+                  );
+                })()}
               </div>
             )}
           </div>

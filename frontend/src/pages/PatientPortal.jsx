@@ -3,7 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import {
   Stethoscope, Calendar, Pill, Heart, ShieldAlert, Sparkles, Clock, ChevronRight,
-  CalendarClock, CheckCircle2, X, MessageSquare, Activity, FileText, Plus, Users, AlertTriangle,
+  CalendarClock, CheckCircle2, X, MessageSquare, Activity, FileText, Plus, Users, AlertTriangle, Pencil,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import {
@@ -15,6 +15,7 @@ import ConnectWhatsApp from "@/components/ConnectWhatsApp";
 import WhatsAppSettingsCard from "@/components/WhatsAppSettingsCard";
 import ProfileSwitcher from "@/components/ProfileSwitcher";
 import SafetyCheckBanner from "@/components/SafetyCheckBanner";
+import ProfileEditModal from "@/components/ProfileEditModal";
 
 export default function PatientPortal() {
   const { user, refresh } = useAuth();
@@ -27,6 +28,7 @@ export default function PatientPortal() {
   const [reminders, setReminders] = useState([]);
   const [showConsult, setShowConsult] = useState(false);
   const [waAutoOpen, setWaAutoOpen] = useState(false);
+  const [editingProfile, setEditingProfile] = useState(null);
 
   const reloadAppts = () => listAppointments().then(setAppts).catch(() => {});
 
@@ -397,13 +399,25 @@ export default function PatientPortal() {
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
           {profiles.map((p) => {
             const sel = p.id === user?.linked_patient_id;
+            const pct = p.profile_completeness || 0;
+            const pctColor = pct >= 80 ? "#3CC97C" : pct >= 50 ? "#F2994A" : "#E85A5A";
             return (
               <div
                 key={p.id}
-                className="glass-soft p-3 flex flex-col items-center text-center gap-1.5"
+                className="glass-soft p-3 flex flex-col items-center text-center gap-1.5 relative group"
                 style={sel ? { borderTop: "2px solid #5B7CFA" } : {}}
                 data-testid={`family-profile-${p.id}`}
               >
+                {/* Edit button */}
+                <button
+                  type="button"
+                  onClick={() => setEditingProfile(p)}
+                  className="absolute top-2 right-2 w-6 h-6 rounded-full bg-white/80 flex items-center justify-center opacity-0 group-hover:opacity-100 transition shadow"
+                  data-testid={`edit-profile-btn-${p.id}`}
+                  title="Edit profile"
+                >
+                  <Pencil size={10} style={{ color: "#5B7CFA" }} />
+                </button>
                 <div
                   className="w-12 h-12 rounded-full flex items-center justify-center text-white font-bold text-[14px]"
                   style={{ background: "linear-gradient(135deg,#5B7CFA,#7C4DFF)" }}
@@ -413,6 +427,16 @@ export default function PatientPortal() {
                 <div className="font-semibold text-[12.5px] truncate w-full" style={{ color: "#0F1836" }}>{p.name}</div>
                 <div className="text-[10.5px] uppercase tracking-wider font-bold" style={{ color: "#7C4DFF" }}>
                   {p.relationship === "self" ? "You" : p.relationship}
+                </div>
+                {p.bmi && (
+                  <div className="text-[10px] font-semibold" style={{ color: "#6B7595" }}>BMI {p.bmi}</div>
+                )}
+                {/* Completeness bar */}
+                <div className="w-full">
+                  <div className="h-1 rounded-full overflow-hidden" style={{ background: "rgba(91,124,250,0.12)" }}>
+                    <div className="h-full rounded-full" style={{ width: `${pct}%`, background: pctColor }} />
+                  </div>
+                  <div className="text-[9.5px] mt-0.5 font-semibold" style={{ color: pctColor }}>{pct}%</div>
                 </div>
                 {sel && <span className="badge badge-success !py-0 text-[9.5px]">Active</span>}
               </div>
@@ -485,6 +509,17 @@ export default function PatientPortal() {
         <ConsultNowModal
           onClose={() => setShowConsult(false)}
           onBooked={handleBooked}
+        />
+      )}
+
+      {editingProfile && (
+        <ProfileEditModal
+          profile={editingProfile}
+          onClose={() => setEditingProfile(null)}
+          onSaved={(updated) => {
+            setProfiles((prev) => prev.map((p) => p.id === updated.id ? { ...p, ...updated } : p));
+            setEditingProfile(null);
+          }}
         />
       )}
     </div>
