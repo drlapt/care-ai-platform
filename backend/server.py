@@ -59,7 +59,7 @@ def _strip_json_fence(txt: str) -> str:
     return txt.strip()
 
 
-
+def _parse_json_response(response: str) -> Any:
     cleaned = _strip_json_fence(response)
     try:
         return json.loads(cleaned)
@@ -68,6 +68,48 @@ def _strip_json_fence(txt: str) -> str:
         if match:
             return json.loads(match.group(1))
         raise
+
+
+def _derive_age_from_dob(dob_str: Optional[str]) -> Optional[int]:
+    """Derive age in whole years from an ISO date string (YYYY-MM-DD)."""
+    if not dob_str:
+        return None
+    try:
+        dob = datetime.strptime(dob_str[:10], "%Y-%m-%d")
+        today = _now()
+        age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+        return max(0, age)
+    except (ValueError, TypeError):
+        return None
+
+
+def _calc_bmi(height_cm: Optional[float], weight_kg: Optional[float]) -> Optional[float]:
+    """Calculate BMI. Returns None if inputs are invalid."""
+    if not height_cm or not weight_kg or height_cm <= 0:
+        return None
+    return round(weight_kg / ((height_cm / 100) ** 2), 1)
+
+
+def _calc_profile_completeness(pi: Dict[str, Any], mh: Dict[str, Any]) -> int:
+    """Score profile completeness 0-100 based on how much clinical data is recorded."""
+    score = 0
+    if pi.get("name", "").strip():
+        score += 20
+    if pi.get("dob") or pi.get("age") is not None:
+        score += 15
+    if pi.get("gender"):
+        score += 10
+    if pi.get("height_cm") and pi.get("weight_kg"):
+        score += 15
+    if pi.get("blood_group"):
+        score += 10
+    if mh.get("current_conditions") or mh.get("allergies"):
+        score += 10
+    if mh.get("current_medications") or mh.get("medications"):
+        score += 10
+    if mh.get("allergies"):
+        score += 10
+    return min(score, 100)
 
 
 
@@ -2523,16 +2565,24 @@ def _drug_allergy_collisions(meds: List[Dict[str, Any]], patient: Dict[str, Any]
 
 class ProfileCreate(BaseModel):
     name: str
-    age: Optional[int] = None
+    dob: Optional[str] = None          # ISO date YYYY-MM-DD; age derived from this
+    age: Optional[int] = None          # fallback when DOB unknown
     gender: Optional[str] = None
-    relationship: Optional[str] = "family"  # self | family:* | guest
+    relationship: Optional[str] = "family"  # self | mother | father | spouse | child | sibling | family | guest
+    height_cm: Optional[float] = None
+    weight_kg: Optional[float] = None
+    blood_group: Optional[str] = None
 
 
 class ProfilePatch(BaseModel):
     name: Optional[str] = None
+    dob: Optional[str] = None
     age: Optional[int] = None
     gender: Optional[str] = None
     relationship: Optional[str] = None
+    height_cm: Optional[float] = None
+    weight_kg: Optional[float] = None
+    blood_group: Optional[str] = None
 
 
 class FactConfirmBody(BaseModel):
@@ -2553,14 +2603,30 @@ class FactCreateBody(BaseModel):
 
 def _profile_summary(p: Dict[str, Any]) -> Dict[str, Any]:
     pi = p.get("personal_info") or {}
+    mh = p.get("medical_history") or {}
     mf_count = len(p.get("medical_facts") or [])
     pending_count = len(p.get("pending_facts") or [])
+
+    dob = pi.get("dob")
+    age = _derive_age_from_dob(dob) if dob else pi.get("age")
+    height_cm = pi.get("height_cm")
+    weight_kg = pi.get("weight_kg")
+    bmi = pi.get("bmi") or _calc_bmi(height_cm, weight_kg)
+    completeness = p.get("profile_completeness") or _calc_profile_completeness(pi, mh)
+
     return {
         "id": p["id"],
         "name": pi.get("name") or "Unnamed",
-        "age": pi.get("age"),
+        "dob": dob,
+        "age": age,
         "gender": pi.get("gender"),
+        "height_cm": height_cm,
+        "weight_kg": weight_kg,
+        "bmi": bmi,
+        "blood_group": pi.get("blood_group"),
         "relationship": p.get("relationship") or ("self" if pi.get("email") else "family"),
+        "profile_completeness": completeness,
+        "consultation_count": p.get("consultation_count") or len(p.get("consultations") or []),
         "is_active": False,  # filled by caller
         "fact_count": mf_count,
         "pending_count": pending_count,
@@ -2591,24 +2657,37 @@ async def create_profile(payload: ProfileCreate, user: User = Depends(get_curren
     pid = str(uuid.uuid4())
     rel = (payload.relationship or "family").lower()
     if rel == "self":
-        # only one self profile allowed
         if await db.patients.count_documents({"profile_owner_user_id": user.user_id, "relationship": "self"}) > 0:
             raise HTTPException(status_code=400, detail="A self profile already exists")
+
+    dob = payload.dob
+    age = _derive_age_from_dob(dob) if dob else payload.age
+    bmi = _calc_bmi(payload.height_cm, payload.weight_kg)
+
+    pi = {
+        "name": payload.name.strip(),
+        "dob": dob,
+        "age": age,
+        "gender": payload.gender,
+        "height_cm": payload.height_cm,
+        "weight_kg": payload.weight_kg,
+        "bmi": bmi,
+        "blood_group": payload.blood_group,
+    }
+    mh: Dict[str, Any] = {"allergies": [], "current_medications": [], "current_conditions": []}
+    completeness = _calc_profile_completeness(pi, mh)
+
     doc = {
         "id": pid,
         "profile_owner_user_id": user.user_id,
         "relationship": rel,
-        "personal_info": {
-            "name": payload.name.strip(),
-            "age": payload.age,
-            "gender": payload.gender,
-        },
-        "medical_history": {"allergies": [], "current_medications": [], "current_conditions": []},
+        "personal_info": pi,
+        "medical_history": mh,
         "medical_facts": [],
         "pending_facts": [],
         "consultations": [],
         "consultation_count": 0,
-        "profile_completeness": 10,
+        "profile_completeness": completeness,
         "created_at": _now_iso(),
         "created_by": user.user_id,
     }
@@ -2622,22 +2701,41 @@ async def patch_profile(profile_id: str, payload: ProfilePatch, user: User = Dep
     p = await db.patients.find_one({"id": profile_id}, {"_id": 0})
     if not p or (p.get("profile_owner_user_id") not in (user.user_id, None) and p.get("id") != user.linked_patient_id):
         raise HTTPException(status_code=404, detail="Profile not found")
-    update: Dict[str, Any] = {}
-    pi = p.get("personal_info") or {}
-    if payload.name is not None: pi["name"] = payload.name.strip()
-    if payload.age is not None: pi["age"] = payload.age
-    if payload.dob is not None: pi["dob"] = payload.dob
-    if payload.gender is not None: pi["gender"] = payload.gender
-    if payload.height_cm is not None: pi["height_cm"] = payload.height_cm
-    if payload.weight_kg is not None: pi["weight_kg"] = payload.weight_kg
-    if payload.height_cm and payload.weight_kg:
-        pi["bmi"] = round(payload.weight_kg / ((payload.height_cm / 100) ** 2), 1)
-    if payload.blood_group is not None: pi["blood_group"] = payload.blood_group
-    update["personal_info"] = pi
-    if payload.relationship is not None: update["relationship"] = payload.relationship
-    update["updated_at"] = _now_iso()
+
+    pi = dict(p.get("personal_info") or {})
+    mh = p.get("medical_history") or {}
+
+    if payload.name is not None:
+        pi["name"] = payload.name.strip()
+    if payload.dob is not None:
+        pi["dob"] = payload.dob
+        pi["age"] = _derive_age_from_dob(payload.dob)
+    elif payload.age is not None:
+        pi["age"] = payload.age
+    if payload.gender is not None:
+        pi["gender"] = payload.gender
+    if payload.height_cm is not None:
+        pi["height_cm"] = payload.height_cm
+    if payload.weight_kg is not None:
+        pi["weight_kg"] = payload.weight_kg
+    if payload.blood_group is not None:
+        pi["blood_group"] = payload.blood_group
+
+    # Recalculate BMI whenever height or weight is present (from patch or existing data)
+    pi["bmi"] = _calc_bmi(pi.get("height_cm"), pi.get("weight_kg"))
+
+    completeness = _calc_profile_completeness(pi, mh)
+
+    update: Dict[str, Any] = {
+        "personal_info": pi,
+        "profile_completeness": completeness,
+        "updated_at": _now_iso(),
+    }
+    if payload.relationship is not None:
+        update["relationship"] = payload.relationship
+
     await db.patients.update_one({"id": profile_id}, {"$set": update})
-    return {"ok": True}
+    return {"ok": True, "profile_completeness": completeness, "bmi": pi.get("bmi")}
 
 
 @api_router.delete("/profiles/{profile_id}")
