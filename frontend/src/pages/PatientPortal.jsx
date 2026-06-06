@@ -208,19 +208,14 @@ export default function PatientPortal() {
             return (
               <div
                 key={p.id}
-                className="glass-soft p-3 flex flex-col items-center text-center gap-1.5 relative group"
+                role="button"
+                tabIndex={0}
+                onClick={() => setEditingProfile(p)}
+                onKeyDown={(e) => e.key === "Enter" && setEditingProfile(p)}
+                className="glass-soft p-3 flex flex-col items-center text-center gap-1.5 cursor-pointer hover:shadow-md transition active:scale-[0.98]"
                 style={sel ? { borderTop: "2px solid #5B7CFA" } : {}}
                 data-testid={`family-profile-${p.id}`}
               >
-                <button
-                  type="button"
-                  onClick={() => setEditingProfile(p)}
-                  className="absolute top-2 right-2 w-6 h-6 rounded-full bg-white/80 flex items-center justify-center opacity-0 group-hover:opacity-100 transition shadow"
-                  data-testid={`edit-profile-btn-${p.id}`}
-                  title="Edit profile"
-                >
-                  <Pencil size={10} style={{ color: "#5B7CFA" }} />
-                </button>
                 <div
                   className="w-12 h-12 rounded-full flex items-center justify-center text-white font-bold text-[14px]"
                   style={{ background: "linear-gradient(135deg,#5B7CFA,#7C4DFF)" }}
@@ -238,11 +233,23 @@ export default function PatientPortal() {
                 <div className="flex items-center gap-1 flex-wrap justify-center mt-0.5">
                   <CategoryDot label="Identity" done={idOk} />
                   <CategoryDot label="Vitals" done={vitalsOk} />
-                  <Link to={`/profiles/${p.id}/health-record`} title="Manage health record" onClick={(e) => e.stopPropagation()}>
+                  <Link
+                    to={`/profiles/${p.id}/health-record`}
+                    title="Manage health record"
+                    onClick={(e) => e.stopPropagation()}
+                  >
                     <CategoryDot label="Health" done={hrOk} />
                   </Link>
                 </div>
                 {sel && <span className="badge badge-success !py-0 text-[9.5px]">Active</span>}
+                {/* Always-visible edit affordance — works on touch */}
+                <div
+                  className="mt-auto inline-flex items-center gap-0.5 text-[9.5px] font-semibold"
+                  style={{ color: "#9AA3BD" }}
+                  data-testid={`edit-profile-btn-${p.id}`}
+                >
+                  <Pencil size={8} /> Edit
+                </div>
               </div>
             );
           })}
