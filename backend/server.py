@@ -112,6 +112,63 @@ def _calc_profile_completeness(pi: Dict[str, Any], mh: Dict[str, Any]) -> int:
     return min(score, 100)
 
 
+def _normalize_height_to_cm(val) -> Optional[float]:
+    """Convert any height representation (string or numeric) to centimeters."""
+    if val is None:
+        return None
+    if isinstance(val, (int, float)):
+        v = float(val)
+        if 50.0 <= v <= 300.0:
+            return round(v, 1)
+        if 3.0 <= v <= 8.0:  # bare feet value, e.g. 5.58
+            return round(v * 30.48, 1)
+        return None
+    s = str(val).strip().lower()
+    m = re.match(r'^(\d+(?:\.\d+)?)\s*(?:cm|centimeter|centimeters?)$', s)
+    if m:
+        return round(float(m.group(1)), 1)
+    m = re.match(r'^(\d+(?:\.\d+)?)\s*(?:inch|inches|in)$', s)
+    if m:
+        return round(float(m.group(1)) * 2.54, 1)
+    m = re.match(r"^(\d+)\s*(?:feet|foot|ft|f)\s*(\d+(?:\.\d+)?)\s*(?:inch|inches|in|\")?$", s)
+    if m:
+        return round(int(m.group(1)) * 30.48 + float(m.group(2)) * 2.54, 1)
+    m = re.match(r"^(\d+)'(\d+(?:\.\d+)?)\s*\"?$", s)
+    if m:
+        return round(int(m.group(1)) * 30.48 + float(m.group(2)) * 2.54, 1)
+    m = re.match(r'^(\d+(?:\.\d+)?)$', s)
+    if m:
+        v = float(m.group(1))
+        if 50.0 <= v <= 300.0:
+            return round(v, 1)
+        if 3.0 <= v <= 8.0:
+            return round(v * 30.48, 1)
+    return None
+
+
+def _normalize_weight_to_kg(val) -> Optional[float]:
+    """Convert any weight representation (string or numeric) to kilograms."""
+    if val is None:
+        return None
+    if isinstance(val, (int, float)):
+        v = float(val)
+        if 1.0 <= v <= 500.0:
+            return round(v, 1)
+        return None
+    s = str(val).strip().lower()
+    m = re.match(r'^(\d+(?:\.\d+)?)\s*(?:kg|kilogram|kilograms?|kilo|kilos?)$', s)
+    if m:
+        return round(float(m.group(1)), 1)
+    m = re.match(r'^(\d+(?:\.\d+)?)\s*(?:pound|pounds|lbs?|lb)$', s)
+    if m:
+        return round(float(m.group(1)) * 0.453592, 1)
+    m = re.match(r'^(\d+(?:\.\d+)?)$', s)
+    if m:
+        v = float(m.group(1))
+        if 1.0 <= v <= 500.0:
+            return round(v, 1)
+    return None
+
 
 openai_client = AsyncOpenAI(api_key=EMERGENT_LLM_KEY)
 async def _llm(system: str, user: str, session_id: str = "") -> str:
@@ -2632,6 +2689,13 @@ def _profile_summary(p: Dict[str, Any]) -> Dict[str, Any]:
     bmi = pi.get("bmi") or _calc_bmi(height_cm, weight_kg)
     completeness = p.get("profile_completeness") or _calc_profile_completeness(pi, mh)
 
+    conditions_raw = mh.get("current_conditions") or []
+    conditions = [c if isinstance(c, str) else c.get("condition", "") for c in conditions_raw][:10]
+    meds_raw = mh.get("current_medications") or mh.get("medications") or []
+    medications = [m if isinstance(m, str) else m.get("medication", m.get("name", "")) for m in meds_raw][:10]
+    allergies = [a for a in (mh.get("allergies") or []) if a][:10]
+    has_health_record = bool(conditions or medications or allergies or mf_count > 0)
+
     return {
         "id": p["id"],
         "name": pi.get("name") or "Unnamed",
@@ -2648,6 +2712,10 @@ def _profile_summary(p: Dict[str, Any]) -> Dict[str, Any]:
         "is_active": False,  # filled by caller
         "fact_count": mf_count,
         "pending_count": pending_count,
+        "has_health_record": has_health_record,
+        "conditions": conditions,
+        "medications": medications,
+        "allergies": allergies,
         "created_at": p.get("created_at"),
     }
 
@@ -2657,21 +2725,69 @@ _AI_EXTRACT_SYSTEM = """You are CARE AI — a medical intake assistant creating 
 Your ONLY job: extract explicitly stated information. Return structured JSON.
 
 MANDATORY RULES:
-1. Extract ONLY what is explicitly stated — never infer, never guess, never assume
-2. Relationship NEVER implies gender: "Mother" does NOT mean Female; "Father" does NOT mean Male
-3. Never invent: conditions, medications, allergies, gender, blood group, DOB
-4. DOB is the source of truth — if DOB is stated, derive age from it
-5. If only age is stated (no DOB): store as age_estimate with age_estimate_source="patient_reported"
-6. blood_group MUST be exactly one of: A+, A-, B+, B-, AB+, AB-, O+, O- — or null
-7. gender MUST be exactly one of: male, female, other — or null (not inferred from relationship)
-8. conditions/medications/allergies: ONLY include explicitly named ones
-9. height: extract only if explicitly stated in cm or feet/inches (convert to cm)
-10. weight: extract only if explicitly stated in kg or lbs (convert to kg)
+1. Never invent: conditions, medications, allergies, blood group, DOB
+2. DOB is the source of truth — if DOB is stated, derive age from it
+3. If only age is stated (no DOB): store as age_estimate with age_estimate_source="patient_reported"
+4. blood_group MUST be exactly one of: A+, A-, B+, B-, AB+, AB-, O+, O- — or null
+5. gender MUST be exactly one of: male, female, other — or null
+6. conditions/medications/allergies: ONLY include explicitly named ones
+7. height: always convert to numeric cm value (see HEIGHT section below)
+8. weight: always convert to numeric kg value (see WEIGHT section below)
 
-confidence scores (0.0-1.0): reflect how clearly the value was stated
+NAME EXTRACTION EXAMPLES:
+- "his name is Srinivas" → name: "Srinivas"
+- "this is my father Srinivas Rao" → name: "Srinivas Rao"
+- "Srinivas Rao, 55 years old" → name: "Srinivas Rao"
+- "I am creating a profile for Ramesh Kumar" → name: "Ramesh Kumar"
+
+AGE EXTRACTION EXAMPLES:
+- "he is 55" → age_estimate: 55
+- "55 years old" → age_estimate: 55
+- "age 55" → age_estimate: 55
+- "born on 15 March 1969" → dob: "1969-03-15", age derived from dob
+
+GENDER — infer from gendered words spoken in the text:
+- "father", "dad", "papa", "husband", "son", "brother", "grandfather", "uncle", "he", "his", "him" → gender: "male", confidence: 0.7
+- "mother", "mom", "mama", "wife", "daughter", "sister", "grandmother", "aunt", "she", "her" → gender: "female", confidence: 0.7
+- Explicit statement ("he is male", "she is female") → confidence: 1.0
+- No gender indicators at all → gender: null, confidence: 0.0
+
+HEIGHT — always convert to numeric centimeters:
+- "170 cm" or "170 centimeters" → 170.0
+- "5 feet 7 inches" or "5 foot 7" or "5 ft 7" or "5'7" → 170.2
+- "67 inches" → 170.2
+- If height stated but you cannot convert reliably → null
+
+WEIGHT — always convert to numeric kilograms:
+- "70 kg" or "70 kilograms" or "70 kilos" → 70.0
+- "154 pounds" or "154 lbs" → 69.9
+- If weight stated but you cannot convert reliably → null
+
+CONDITIONS — normalise colloquial terms to standard medical names:
+- "diabetic", "sugar patient", "sugar problem", "has sugar" → "Diabetes"
+- "BP", "high BP", "blood pressure problem", "hypertension" → "Hypertension"
+- "low BP" or "low blood pressure" → "Low Blood Pressure"
+- "thyroid", "thyroid problem", "thyroid issue" → "Thyroid Disorder"
+- "heart problem", "cardiac issue" → "Heart Disease"
+- "asthma", "breathing problem" → "Asthma"
+- Other conditions: use the standard medical name if known, else keep as spoken
+
+ALLERGIES:
+- "no allergies", "no known allergies", "NKDA" → allergies: []
+- "allergic to penicillin" → allergies: ["Penicillin"]
+- "allergic to sulfa drugs and aspirin" → allergies: ["Sulfa Drugs", "Aspirin"]
+- If not mentioned → allergies: []
+
+MEDICATIONS — extract name; include dosage if spoken:
+- "takes metformin" → medications: ["Metformin"]
+- "takes metformin 500mg" → medications: ["Metformin 500mg"]
+- "is on thyronorm and amlodipine 5mg" → medications: ["Thyronorm", "Amlodipine 5mg"]
+- If not mentioned → medications: []
+
+confidence scores (0.0-1.0):
   1.0 = explicitly and unambiguously stated
-  0.7 = clearly stated but with minor ambiguity
-  0.4 = implied but not explicit
+  0.7 = clearly inferred from strong contextual cues (e.g. gendered pronouns)
+  0.4 = implied but uncertain
   0.0 = not mentioned
 
 Return ONLY valid JSON matching this exact structure — no markdown, no explanation:
@@ -2706,6 +2822,7 @@ async def ai_extract_profile(payload: ProfileAIExtractRequest, user: User = Depe
     """Extract structured profile data from natural language text.
     On AI failure, returns fallback=True with empty fields — never blocks profile creation.
     """
+    logger.info(f"ai_extract_profile | user={user.user_id} | relationship={payload.relationship} | transcript_len={len(payload.text)} | transcript={payload.text!r}")
     user_prompt = f"Relationship context provided by user: {payload.relationship or 'not specified'}\n\nPatient description to extract from:\n{payload.text}"
     try:
         response = await openai_client.chat.completions.create(
@@ -2715,11 +2832,14 @@ async def ai_extract_profile(payload: ProfileAIExtractRequest, user: User = Depe
                 {"role": "system", "content": _AI_EXTRACT_SYSTEM},
                 {"role": "user", "content": user_prompt},
             ],
-            max_tokens=800,
+            max_tokens=1000,
             temperature=0.1,
         )
-        content = response.choices[0].message.content or "{}"
-        result = json.loads(content)
+        raw_content = response.choices[0].message.content or "{}"
+        logger.info(f"ai_extract_profile | raw_llm_response={raw_content!r}")
+
+        result = json.loads(raw_content)
+        logger.info(f"ai_extract_profile | parsed_json={result}")
         ext = result.get("extracted") or {}
 
         # Normalise and validate
@@ -2728,6 +2848,10 @@ async def ai_extract_profile(payload: ProfileAIExtractRequest, user: User = Depe
 
         bg_raw = (ext.get("blood_group") or "").strip().upper()
         ext["blood_group"] = bg_raw if bg_raw in _VALID_BLOOD_GROUPS else None
+
+        # Post-processing height/weight normalization regardless of LLM output format
+        ext["height_cm"] = _normalize_height_to_cm(ext.get("height_cm"))
+        ext["weight_kg"] = _normalize_weight_to_kg(ext.get("weight_kg"))
 
         # DOB derivation takes priority over stated age
         dob = ext.get("dob")
@@ -2754,6 +2878,8 @@ async def ai_extract_profile(payload: ProfileAIExtractRequest, user: User = Depe
         for field, label in [("gender", "gender"), ("dob", "date of birth"), ("height_cm", "height"), ("weight_kg", "weight"), ("blood_group", "blood group")]:
             if not ext.get(field):
                 missing_optional.append(label)
+
+        logger.info(f"ai_extract_profile | normalized_profile=name={ext.get('name')!r} age={ext.get('age_estimate')} gender={ext.get('gender')} height_cm={ext.get('height_cm')} weight_kg={ext.get('weight_kg')} conditions={ext.get('conditions')} medications={ext.get('medications')} missing_required={missing_required}")
 
         return {
             "extracted": ext,
