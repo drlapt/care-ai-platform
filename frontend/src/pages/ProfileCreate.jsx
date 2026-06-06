@@ -121,7 +121,6 @@ function Screen2CareAI({ relationship, onExtracted, onSkip }) {
   const srNote = speechSupportNote("en-US");
 
   const relLabel = RELATIONSHIP_LABEL[relationship] || "this person";
-  const exampleText = `"This is my ${relationship === "self" ? "own profile" : relationship}. He is 67 years old. He has diabetes and thyroid. His height is 170 cm and weight is 78 kg."`;
 
   const clearSilence = () => { if (silenceTimer.current) { clearTimeout(silenceTimer.current); silenceTimer.current = null; } };
 
@@ -209,8 +208,39 @@ function Screen2CareAI({ relationship, onExtracted, onSkip }) {
 
       {mode === "voice" ? (
         <>
+          {/* Pre-mic guidance — always visible before recording starts */}
+          {!listening && !transcript && (
+            <div className="glass-soft rounded-2xl px-4 py-4 flex flex-col gap-3" data-testid="voice-guidance">
+              <div className="text-[11.5px] font-bold uppercase tracking-wider" style={{ color: "#5B7CFA" }}>
+                Tell me:
+              </div>
+              <ul className="flex flex-col gap-1.5">
+                {[
+                  "Name",
+                  "Age or date of birth",
+                  "Gender",
+                  "Height and weight",
+                  "Any health conditions",
+                  "Current medications",
+                  "Allergies",
+                ].map((item) => (
+                  <li key={item} className="flex items-center gap-2 text-[13.5px]" style={{ color: "#2A3558" }}>
+                    <div className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: "#5B7CFA" }} />
+                    {item}
+                  </li>
+                ))}
+              </ul>
+              <div className="border-t pt-3" style={{ borderColor: "rgba(91,124,250,0.12)" }}>
+                <div className="text-[10px] font-bold uppercase tracking-wider mb-1.5" style={{ color: "#9AA3BD" }}>Example</div>
+                <p className="text-[12.5px] leading-relaxed italic" style={{ color: "#6B7595" }}>
+                  "My father Srinivas Rao is 55 years old. His height is 5 feet 7 inches and weight is 70 kilograms. He has diabetes and takes metformin. No known allergies."
+                </p>
+              </div>
+            </div>
+          )}
+
           {/* Microphone — HERO */}
-          <div className="flex flex-col items-center gap-4 py-4">
+          <div className="flex flex-col items-center gap-4 py-2">
             <button
               type="button"
               onClick={listening ? handleStopAndExtract : startListening}
@@ -252,14 +282,6 @@ function Screen2CareAI({ relationship, onExtracted, onSkip }) {
             >
               <ChevronRight size={16} /> Continue with this
             </button>
-          )}
-
-          {/* Example */}
-          {!transcript && (
-            <div className="glass-soft rounded-2xl px-4 py-3 text-[13px] leading-relaxed" style={{ color: "#6B7595" }}>
-              <div className="text-[10px] font-bold uppercase tracking-wider mb-1" style={{ color: "#9AA3BD" }}>Example</div>
-              {exampleText}
-            </div>
           )}
 
           {/* Type instead */}
