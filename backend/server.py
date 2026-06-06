@@ -103,11 +103,15 @@ def _calc_profile_completeness(pi: Dict[str, Any], mh: Dict[str, Any]) -> int:
         score += 15
     if pi.get("blood_group"):
         score += 10
-    if mh.get("current_conditions") or mh.get("allergies"):
+    # Check both new structured fields and legacy fields
+    has_conditions = bool(mh.get("conditions") or mh.get("current_conditions"))
+    has_allergies = bool(mh.get("allergies"))
+    has_medications = bool(mh.get("medications") or mh.get("current_medications"))
+    if has_conditions or has_allergies:
         score += 10
-    if mh.get("current_medications") or mh.get("medications"):
+    if has_medications:
         score += 10
-    if mh.get("allergies"):
+    if has_allergies:
         score += 10
     return min(score, 100)
 
@@ -2172,16 +2176,51 @@ async def _build_patient_context(patient: Dict[str, Any]) -> str:
     mh = patient.get("medical_history", {})
     consults = patient.get("consultations") or []
     last = consults[-1] if consults else None
-    meds = [m.get("name") if isinstance(m, dict) else str(m) for m in (mh.get("medications") or [])]
-    # A4 — latest prescription is needed by Care AI (web + WhatsApp) so it can
-    # answer "what's this med for", "can I take it with food", etc.
-    last_rx = (last.get("prescriptions") if last else None) or []
-    # Merge care_memory into medical history for richer context
     cm = patient.get("care_memory") or {}
-    merged_conditions = list({str(c) for c in (mh.get("current_conditions") or []) + (cm.get("conditions") or [])})
-    merged_allergies = list({str(a) for a in (mh.get("allergies") or []) + (cm.get("allergies") or [])})
-    merged_meds = list({str(m) for m in meds + [m.get("name") if isinstance(m, dict) else str(m) for m in (cm.get("medications") or [])]})
 
+    # Conditions: structured Sprint 2.2 format (name + status) merged with legacy
+    struct_conds = [
+        f"{c['name']} ({c['status']})"
+        for c in (mh.get("conditions") or [])
+        if isinstance(c, dict) and c.get("name")
+    ]
+    legacy_conds = [
+        str(c) if not isinstance(c, dict) else c.get("condition", str(c))
+        for c in (mh.get("current_conditions") or [])
+    ]
+    merged_conditions = list({c for c in struct_conds + legacy_conds + (cm.get("conditions") or []) if c})
+
+    # Medications: structured Sprint 2.2 format (name + strength + frequency) merged with legacy
+    struct_meds = []
+    for m in (mh.get("medications") or []):
+        if isinstance(m, dict) and m.get("name"):
+            parts = [m["name"]]
+            if m.get("strength"): parts.append(m["strength"])
+            if m.get("frequency"): parts.append(m["frequency"])
+            struct_meds.append(" ".join(parts))
+        elif isinstance(m, str) and m:
+            struct_meds.append(m)
+    legacy_meds = [
+        m.get("name") if isinstance(m, dict) else str(m)
+        for m in (mh.get("current_medications") or [])
+    ]
+    cm_meds = [m.get("name") if isinstance(m, dict) else str(m) for m in (cm.get("medications") or [])]
+    merged_meds = list({m for m in struct_meds + legacy_meds + cm_meds if m})
+
+    # Allergies: structured Sprint 2.2 format (substance + severity) merged with legacy
+    struct_allergies = []
+    for a in (mh.get("allergies") or []):
+        if isinstance(a, dict) and a.get("substance"):
+            label = a["substance"]
+            if a.get("severity"): label += f" ({a['severity']})"
+            struct_allergies.append(label)
+        elif isinstance(a, str) and a:
+            struct_allergies.append(a)
+    cm_allergies = [str(a) for a in (cm.get("allergies") or []) if a]
+    merged_allergies = list({a for a in struct_allergies + cm_allergies if a})
+
+    # A4 — latest prescription for Care AI med Q&A
+    last_rx = (last.get("prescriptions") if last else None) or []
     dob = pi.get("dob")
     age = _derive_age_from_dob(dob) if dob else pi.get("age")
     ctx = {
@@ -2575,8 +2614,9 @@ def _drug_allergy_collisions(meds: List[Dict[str, Any]], patient: Dict[str, Any]
     # (they came from intake forms / doctor entry).
     for a in (patient.get("medical_history") or {}).get("allergies") or []:
         if a:
-            v = str(a).lower()
-            if v not in confirmed_allergies:
+            # Support both structured dicts {substance: ...} and legacy strings
+            v = (a.get("substance") if isinstance(a, dict) else str(a)).lower()
+            if v and v not in confirmed_allergies:
                 confirmed_allergies.append(v)
     if not confirmed_allergies:
         return []
@@ -2676,6 +2716,45 @@ class FactCreateBody(BaseModel):
     source: Optional[str] = "user_confirmed"
 
 
+_VALID_CONDITION_STATUSES = {"active", "resolved", "monitoring"}
+_VALID_ALLERGY_SEVERITIES = {"mild", "moderate", "severe"}
+
+
+class ConditionCreate(BaseModel):
+    name: str
+    diagnosis_date: Optional[str] = None
+    status: str = "active"
+    notes: Optional[str] = None
+
+
+class ConditionPatch(BaseModel):
+    status: Optional[str] = None
+    notes: Optional[str] = None
+    diagnosis_date: Optional[str] = None
+
+
+class MedicationCreate(BaseModel):
+    name: str
+    strength: Optional[str] = None
+    frequency: Optional[str] = None
+    duration: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class MedicationPatch(BaseModel):
+    name: Optional[str] = None
+    strength: Optional[str] = None
+    frequency: Optional[str] = None
+    duration: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class AllergyCreate(BaseModel):
+    substance: str
+    reaction: Optional[str] = None
+    severity: Optional[str] = None  # mild|moderate|severe
+
+
 def _profile_summary(p: Dict[str, Any]) -> Dict[str, Any]:
     pi = p.get("personal_info") or {}
     mh = p.get("medical_history") or {}
@@ -2689,12 +2768,20 @@ def _profile_summary(p: Dict[str, Any]) -> Dict[str, Any]:
     bmi = pi.get("bmi") or _calc_bmi(height_cm, weight_kg)
     completeness = p.get("profile_completeness") or _calc_profile_completeness(pi, mh)
 
+    # Structured conditions (Sprint 2.2)
+    new_conds = mh.get("conditions") or []
+    # Legacy conditions
     conditions_raw = mh.get("current_conditions") or []
     conditions = [c if isinstance(c, str) else c.get("condition", "") for c in conditions_raw][:10]
-    meds_raw = mh.get("current_medications") or mh.get("medications") or []
+    # Structured medications (Sprint 2.2)
+    new_meds = [m for m in (mh.get("medications") or []) if isinstance(m, dict)]
+    # Legacy medications
+    meds_raw = mh.get("current_medications") or []
     medications = [m if isinstance(m, str) else m.get("medication", m.get("name", "")) for m in meds_raw][:10]
-    allergies = [a for a in (mh.get("allergies") or []) if a][:10]
-    has_health_record = bool(conditions or medications or allergies or mf_count > 0)
+    # Allergies — support both structured dicts and legacy strings
+    allergies_raw = mh.get("allergies") or []
+    allergies = [a.get("substance") if isinstance(a, dict) else a for a in allergies_raw if a][:10]
+    has_health_record = bool(new_conds or new_meds or allergies_raw or conditions or medications or mf_count > 0)
 
     return {
         "id": p["id"],
@@ -3047,6 +3134,229 @@ async def switch_profile(profile_id: str, user: User = Depends(get_current_user)
         raise HTTPException(status_code=404, detail="Profile not found")
     await db.users.update_one({"user_id": user.user_id}, {"$set": {"linked_patient_id": profile_id}})
     return {"ok": True, "active_profile_id": profile_id}
+
+
+# ─── Sprint 2.2 — Living Health Record endpoints ─────────────────────────────
+
+async def _get_owned_profile(profile_id: str, user: User) -> Dict[str, Any]:
+    """Fetch a profile and verify the current user owns it."""
+    p = await db.patients.find_one({"id": profile_id}, {"_id": 0})
+    if not p:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    owned = (
+        p.get("profile_owner_user_id") == user.user_id
+        or p.get("id") == user.linked_patient_id
+    )
+    if not owned:
+        raise HTTPException(status_code=403, detail="Access denied")
+    return p
+
+
+def _hr_response(mh: Dict[str, Any], extra: Optional[Dict] = None) -> Dict[str, Any]:
+    """Standardised health-record payload returned by all HR write endpoints."""
+    out = {
+        "conditions": mh.get("conditions") or [],
+        "medications": mh.get("medications") or [],
+        "allergies": mh.get("allergies") or [],
+    }
+    if extra:
+        out.update(extra)
+    return out
+
+
+@api_router.get("/profiles/{profile_id}/health-record")
+async def get_health_record(profile_id: str, user: User = Depends(get_current_user)):
+    p = await _get_owned_profile(profile_id, user)
+    mh = p.get("medical_history") or {}
+    return _hr_response(mh)
+
+
+# ── Conditions ─────────────────────────────────────────────────────────────
+
+@api_router.post("/profiles/{profile_id}/conditions")
+async def add_condition(profile_id: str, payload: ConditionCreate, user: User = Depends(get_current_user)):
+    if not payload.name.strip():
+        raise HTTPException(status_code=400, detail="Condition name is required")
+    status_val = (payload.status or "active").lower()
+    if status_val not in _VALID_CONDITION_STATUSES:
+        raise HTTPException(status_code=400, detail=f"status must be one of: {sorted(_VALID_CONDITION_STATUSES)}")
+
+    p = await _get_owned_profile(profile_id, user)
+    mh = dict(p.get("medical_history") or {})
+    pi = p.get("personal_info") or {}
+    conditions = list(mh.get("conditions") or [])
+    conditions.append({
+        "id": str(uuid.uuid4()),
+        "name": payload.name.strip(),
+        "diagnosis_date": payload.diagnosis_date or None,
+        "status": status_val,
+        "notes": payload.notes or None,
+        "created_at": _now_iso(),
+    })
+    mh["conditions"] = conditions
+    completeness = _calc_profile_completeness(pi, mh)
+    await db.patients.update_one({"id": profile_id}, {"$set": {
+        "medical_history": mh, "profile_completeness": completeness, "updated_at": _now_iso(),
+    }})
+    return _hr_response(mh, {"profile_completeness": completeness})
+
+
+@api_router.patch("/profiles/{profile_id}/conditions/{condition_id}")
+async def patch_condition(profile_id: str, condition_id: str, payload: ConditionPatch, user: User = Depends(get_current_user)):
+    p = await _get_owned_profile(profile_id, user)
+    mh = dict(p.get("medical_history") or {})
+    conditions = list(mh.get("conditions") or [])
+    idx = next((i for i, c in enumerate(conditions) if isinstance(c, dict) and c.get("id") == condition_id), None)
+    if idx is None:
+        raise HTTPException(status_code=404, detail="Condition not found")
+    if payload.status is not None:
+        sv = payload.status.lower()
+        if sv not in _VALID_CONDITION_STATUSES:
+            raise HTTPException(status_code=400, detail=f"status must be one of: {sorted(_VALID_CONDITION_STATUSES)}")
+        conditions[idx]["status"] = sv
+    if payload.notes is not None:
+        conditions[idx]["notes"] = payload.notes or None
+    if payload.diagnosis_date is not None:
+        conditions[idx]["diagnosis_date"] = payload.diagnosis_date or None
+    conditions[idx]["updated_at"] = _now_iso()
+    mh["conditions"] = conditions
+    pi = p.get("personal_info") or {}
+    completeness = _calc_profile_completeness(pi, mh)
+    await db.patients.update_one({"id": profile_id}, {"$set": {
+        "medical_history": mh, "profile_completeness": completeness, "updated_at": _now_iso(),
+    }})
+    return _hr_response(mh, {"profile_completeness": completeness})
+
+
+@api_router.delete("/profiles/{profile_id}/conditions/{condition_id}")
+async def delete_condition(profile_id: str, condition_id: str, user: User = Depends(get_current_user)):
+    p = await _get_owned_profile(profile_id, user)
+    mh = dict(p.get("medical_history") or {})
+    pi = p.get("personal_info") or {}
+    mh["conditions"] = [c for c in (mh.get("conditions") or []) if not (isinstance(c, dict) and c.get("id") == condition_id)]
+    completeness = _calc_profile_completeness(pi, mh)
+    await db.patients.update_one({"id": profile_id}, {"$set": {
+        "medical_history": mh, "profile_completeness": completeness, "updated_at": _now_iso(),
+    }})
+    return _hr_response(mh, {"profile_completeness": completeness})
+
+
+# ── Medications ────────────────────────────────────────────────────────────
+
+@api_router.post("/profiles/{profile_id}/medications")
+async def add_medication(profile_id: str, payload: MedicationCreate, user: User = Depends(get_current_user)):
+    if not payload.name.strip():
+        raise HTTPException(status_code=400, detail="Medication name is required")
+    p = await _get_owned_profile(profile_id, user)
+    mh = dict(p.get("medical_history") or {})
+    pi = p.get("personal_info") or {}
+    # Keep only structured dicts; legacy strings stay in current_medications
+    medications = [m for m in (mh.get("medications") or []) if isinstance(m, dict)]
+    medications.append({
+        "id": str(uuid.uuid4()),
+        "name": payload.name.strip(),
+        "strength": payload.strength or None,
+        "frequency": payload.frequency or None,
+        "duration": payload.duration or None,
+        "notes": payload.notes or None,
+        "active": True,
+        "created_at": _now_iso(),
+    })
+    mh["medications"] = medications
+    completeness = _calc_profile_completeness(pi, mh)
+    await db.patients.update_one({"id": profile_id}, {"$set": {
+        "medical_history": mh, "profile_completeness": completeness, "updated_at": _now_iso(),
+    }})
+    return _hr_response(mh, {"profile_completeness": completeness})
+
+
+@api_router.patch("/profiles/{profile_id}/medications/{medication_id}")
+async def patch_medication(profile_id: str, medication_id: str, payload: MedicationPatch, user: User = Depends(get_current_user)):
+    p = await _get_owned_profile(profile_id, user)
+    mh = dict(p.get("medical_history") or {})
+    medications = [m for m in (mh.get("medications") or []) if isinstance(m, dict)]
+    idx = next((i for i, m in enumerate(medications) if m.get("id") == medication_id), None)
+    if idx is None:
+        raise HTTPException(status_code=404, detail="Medication not found")
+    if payload.name is not None:
+        medications[idx]["name"] = payload.name.strip()
+    if payload.strength is not None:
+        medications[idx]["strength"] = payload.strength or None
+    if payload.frequency is not None:
+        medications[idx]["frequency"] = payload.frequency or None
+    if payload.duration is not None:
+        medications[idx]["duration"] = payload.duration or None
+    if payload.notes is not None:
+        medications[idx]["notes"] = payload.notes or None
+    medications[idx]["updated_at"] = _now_iso()
+    mh["medications"] = medications
+    pi = p.get("personal_info") or {}
+    completeness = _calc_profile_completeness(pi, mh)
+    await db.patients.update_one({"id": profile_id}, {"$set": {
+        "medical_history": mh, "profile_completeness": completeness, "updated_at": _now_iso(),
+    }})
+    return _hr_response(mh, {"profile_completeness": completeness})
+
+
+@api_router.delete("/profiles/{profile_id}/medications/{medication_id}")
+async def delete_medication(profile_id: str, medication_id: str, user: User = Depends(get_current_user)):
+    p = await _get_owned_profile(profile_id, user)
+    mh = dict(p.get("medical_history") or {})
+    pi = p.get("personal_info") or {}
+    mh["medications"] = [m for m in (mh.get("medications") or []) if not (isinstance(m, dict) and m.get("id") == medication_id)]
+    completeness = _calc_profile_completeness(pi, mh)
+    await db.patients.update_one({"id": profile_id}, {"$set": {
+        "medical_history": mh, "profile_completeness": completeness, "updated_at": _now_iso(),
+    }})
+    return _hr_response(mh, {"profile_completeness": completeness})
+
+
+# ── Allergies ──────────────────────────────────────────────────────────────
+
+@api_router.post("/profiles/{profile_id}/allergies")
+async def add_allergy(profile_id: str, payload: AllergyCreate, user: User = Depends(get_current_user)):
+    if not payload.substance.strip():
+        raise HTTPException(status_code=400, detail="Substance is required")
+    severity_val = (payload.severity or "").lower().strip() or None
+    if severity_val and severity_val not in _VALID_ALLERGY_SEVERITIES:
+        raise HTTPException(status_code=400, detail=f"severity must be one of: {sorted(_VALID_ALLERGY_SEVERITIES)}")
+
+    p = await _get_owned_profile(profile_id, user)
+    mh = dict(p.get("medical_history") or {})
+    pi = p.get("personal_info") or {}
+    # Migrate any legacy string entries to structured format on first write
+    allergies = []
+    for a in (mh.get("allergies") or []):
+        if isinstance(a, dict):
+            allergies.append(a)
+        elif isinstance(a, str) and a:
+            allergies.append({"id": str(uuid.uuid4()), "substance": a, "reaction": None, "severity": None, "created_at": _now_iso()})
+    allergies.append({
+        "id": str(uuid.uuid4()),
+        "substance": payload.substance.strip(),
+        "reaction": payload.reaction or None,
+        "severity": severity_val,
+        "created_at": _now_iso(),
+    })
+    mh["allergies"] = allergies
+    completeness = _calc_profile_completeness(pi, mh)
+    await db.patients.update_one({"id": profile_id}, {"$set": {
+        "medical_history": mh, "profile_completeness": completeness, "updated_at": _now_iso(),
+    }})
+    return _hr_response(mh, {"profile_completeness": completeness})
+
+
+@api_router.delete("/profiles/{profile_id}/allergies/{allergy_id}")
+async def delete_allergy(profile_id: str, allergy_id: str, user: User = Depends(get_current_user)):
+    p = await _get_owned_profile(profile_id, user)
+    mh = dict(p.get("medical_history") or {})
+    pi = p.get("personal_info") or {}
+    mh["allergies"] = [a for a in (mh.get("allergies") or []) if not (isinstance(a, dict) and a.get("id") == allergy_id)]
+    completeness = _calc_profile_completeness(pi, mh)
+    await db.patients.update_one({"id": profile_id}, {"$set": {
+        "medical_history": mh, "profile_completeness": completeness, "updated_at": _now_iso(),
+    }})
+    return _hr_response(mh, {"profile_completeness": completeness})
 
 
 @api_router.get("/profiles/{profile_id}/facts")
