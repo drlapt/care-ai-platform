@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { X, Save, Loader2, User, Ruler, Weight, Droplets, Calendar, Check, ClipboardList } from "lucide-react";
-import { updateProfile } from "@/lib/api";
+import { X, Save, Loader2, User, Ruler, Weight, Droplets, Calendar, Check, ClipboardList, Trash2 } from "lucide-react";
+import { updateProfile, deleteProfile } from "@/lib/api";
 
 const BLOOD_GROUPS = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"];
 const GENDER_OPTIONS = [
@@ -72,7 +72,7 @@ function CompletenessStatus({ form, profile }) {
   );
 }
 
-export default function ProfileEditModal({ profile, onClose, onSaved }) {
+export default function ProfileEditModal({ profile, onClose, onSaved, onDeleted, isOnlyProfile }) {
   const navigate = useNavigate();
   const [form, setForm] = useState({
     name: profile?.name || "",
@@ -84,6 +84,7 @@ export default function ProfileEditModal({ profile, onClose, onSaved }) {
     blood_group: profile?.blood_group || "",
   });
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const bmi = calcBmi(form.height_cm, form.weight_kg);
   const bmiCat = bmiCategory(bmi);
@@ -112,6 +113,25 @@ export default function ProfileEditModal({ profile, onClose, onSaved }) {
       toast.error(err?.response?.data?.detail || "Could not save profile");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (isOnlyProfile) {
+      toast.error("You must keep at least one profile.");
+      return;
+    }
+    if (!window.confirm(`Delete "${profile?.name}"? This cannot be undone.`)) return;
+    setDeleting(true);
+    try {
+      await deleteProfile(profile.id);
+      toast.success(`${profile.name}'s profile deleted`);
+      onDeleted?.(profile.id);
+      onClose();
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || "Could not delete profile");
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -248,6 +268,23 @@ export default function ProfileEditModal({ profile, onClose, onSaved }) {
             {saving ? "Saving…" : "Save changes"}
           </button>
         </div>
+
+        {/* Danger zone — delete profile */}
+        {profile?.relationship !== "self" && (
+          <div className="border-t pt-3" style={{ borderColor: "rgba(232,90,90,0.2)" }}>
+            <button
+              type="button"
+              onClick={handleDelete}
+              disabled={deleting || isOnlyProfile}
+              className="w-full text-[12.5px] font-semibold py-2 rounded-2xl border transition inline-flex items-center justify-center gap-2 hover:opacity-80 disabled:opacity-40"
+              style={{ borderColor: "rgba(232,90,90,0.3)", color: "#E85A5A", background: "rgba(232,90,90,0.05)" }}
+              data-testid="edit-delete-profile"
+            >
+              {deleting ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
+              {deleting ? "Deleting…" : isOnlyProfile ? "Cannot delete last profile" : "Delete this profile"}
+            </button>
+          </div>
+        )}
       </form>
     </div>
   );

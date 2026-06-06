@@ -530,9 +530,14 @@ export default function PatientPortal() {
       {editingProfile && (
         <ProfileEditModal
           profile={editingProfile}
+          isOnlyProfile={profiles.length <= 1}
           onClose={() => setEditingProfile(null)}
           onSaved={(updated) => {
             setProfiles((prev) => prev.map((p) => p.id === updated.id ? { ...p, ...updated } : p));
+            setEditingProfile(null);
+          }}
+          onDeleted={(deletedId) => {
+            setProfiles((prev) => prev.filter((p) => p.id !== deletedId));
             setEditingProfile(null);
           }}
         />

@@ -196,7 +196,7 @@ export default function ProfileSwitcher() {
 
             {!adding && profiles.length >= max && (
               <div className="px-2 py-2 text-[11px]" style={{ color: "#6B7595" }}>
-                You've added all {max} profiles. Delete one in Settings to add another.
+                You've added all {max} profiles. Open a profile and delete it to make room.
               </div>
             )}
 
