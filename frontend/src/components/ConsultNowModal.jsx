@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { X, Calendar, Stethoscope, Send, ChevronRight, ChevronLeft, Award, Star, Loader2, CheckCircle2, AlertTriangle } from "lucide-react";
+import { X, Calendar, Stethoscope, Send, ChevronRight, ChevronLeft, Award, Star, Loader2, CheckCircle2, AlertTriangle, Plus, UserPlus } from "lucide-react";
 import { createAppointment, listDoctors, doctorAvailability, listProfiles } from "@/lib/api";
 
 function todayISO() {
@@ -24,6 +25,7 @@ const REL_LABEL = { self: "You", mother: "Mother", father: "Father", child: "Chi
 const REL_COLOR = { self: "#5B7CFA", mother: "#E573A0", father: "#3B82F6", child: "#10B981", guest: "#8B5CF6" };
 
 export default function ConsultNowModal({ onClose, onBooked }) {
+  const navigate = useNavigate();
   const [step, setStep] = useState(0);
   const [profiles, setProfiles] = useState([]);
   const [selectedPatientId, setSelectedPatientId] = useState(null);
@@ -163,7 +165,23 @@ export default function ConsultNowModal({ onClose, onBooked }) {
             {loadingProfiles ? (
               <div className="flex justify-center py-6"><Loader2 size={20} className="animate-spin" style={{ color: "#5B7CFA" }} /></div>
             ) : profiles.length === 0 ? (
-              <div className="text-[13px]" style={{ color: "#6B7595" }}>No profiles found. Please create a profile first.</div>
+              <div className="flex flex-col items-center gap-4 py-6 text-center">
+                <div className="w-14 h-14 rounded-2xl flex items-center justify-center" style={{ background: "rgba(91,124,250,0.10)" }}>
+                  <UserPlus size={24} className="text-[#5B7CFA]" />
+                </div>
+                <div>
+                  <div className="font-display font-bold text-[17px]" style={{ color: "#0F1836" }}>No health profiles yet</div>
+                  <div className="text-[13px] mt-1" style={{ color: "#6B7595" }}>Create a profile so CARE AI can personalise your consultation.</div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => { onClose(); navigate("/profiles/new?from=booking"); }}
+                  className="btn-primary inline-flex items-center gap-2"
+                  data-testid="consult-create-profile-cta"
+                >
+                  <Plus size={14} /> Create your first health profile
+                </button>
+              </div>
             ) : (
               <div className="flex flex-col gap-2">
                 {profiles.map((p) => {
@@ -171,7 +189,6 @@ export default function ConsultNowModal({ onClose, onBooked }) {
                   const sel = p.id === selectedPatientId;
                   const pct = p.profile_completeness || 0;
                   const pctColor = pct >= 80 ? "#3CC97C" : pct >= 50 ? "#F2994A" : "#E85A5A";
-                  const lowProfile = pct < 40;
                   return (
                     <button
                       key={p.id}
@@ -211,6 +228,18 @@ export default function ConsultNowModal({ onClose, onBooked }) {
                     </div>
                   );
                 })()}
+                {/* Add another profile */}
+                {profiles.length < 5 && (
+                  <button
+                    type="button"
+                    onClick={() => { onClose(); navigate("/profiles/new?from=booking"); }}
+                    className="flex items-center gap-2 px-3 py-2.5 rounded-2xl border border-dashed text-[13px] font-semibold transition hover:bg-[#5B7CFA]/5"
+                    style={{ borderColor: "rgba(91,124,250,0.35)", color: "#5B7CFA" }}
+                    data-testid="consult-add-profile-btn"
+                  >
+                    <Plus size={13} /> Add another profile
+                  </button>
+                )}
               </div>
             )}
           </div>

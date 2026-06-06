@@ -157,6 +157,8 @@ export const createProfile = (payload) => api.post("/profiles", payload).then((r
 export const updateProfile = (id, payload) => api.patch(`/profiles/${id}`, payload).then((r) => r.data);
 export const deleteProfile = (id) => api.delete(`/profiles/${id}`).then((r) => r.data);
 export const switchProfile = (id) => api.post(`/profiles/${id}/switch`).then((r) => r.data);
+export const extractProfileFromText = (text, relationship) =>
+  api.post("/profiles/ai-extract", { text, relationship }).then((r) => r.data);
 
 // Phase 13 — Autonomous co-pilot + WhatsApp activity
 export const alertCopilot = (alert_id) => api.post(`/followup/alerts/${alert_id}/copilot`).then((r) => r.data);
