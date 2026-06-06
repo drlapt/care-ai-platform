@@ -394,10 +394,15 @@ async def logout(response: Response, session_token: Optional[str] = Cookie(defau
 
 class PersonalInfo(BaseModel):
     name: str
-    age: int
+    age: Optional[int] = None
+    dob: Optional[str] = None
     gender: str
-    phone: str
+    phone: Optional[str] = ""
     email: Optional[str] = ""
+    height_cm: Optional[float] = None
+    weight_kg: Optional[float] = None
+    blood_group: Optional[str] = None
+    relationship: Optional[str] = "self"
     emergency_contact_name: Optional[str] = ""
     emergency_contact_phone: Optional[str] = ""
 
@@ -2072,13 +2077,24 @@ async def _build_patient_context(patient: Dict[str, Any]) -> str:
     # A4 — latest prescription is needed by Care AI (web + WhatsApp) so it can
     # answer "what's this med for", "can I take it with food", etc.
     last_rx = (last.get("prescriptions") if last else None) or []
+    # Merge care_memory into medical history for richer context
+    cm = patient.get("care_memory") or {}
+    merged_conditions = list({str(c) for c in (mh.get("current_conditions") or []) + (cm.get("conditions") or [])})
+    merged_allergies = list({str(a) for a in (mh.get("allergies") or []) + (cm.get("allergies") or [])})
+    merged_meds = list({str(m) for m in meds + [m.get("name") if isinstance(m, dict) else str(m) for m in (cm.get("medications") or [])]})
+
     ctx = {
         "patient_name": pi.get("name"),
         "age": pi.get("age"),
+        "dob": pi.get("dob"),
         "gender": pi.get("gender"),
-        "allergies": mh.get("allergies", []),
-        "current_medications": meds,
-        "current_conditions": mh.get("current_conditions", []),
+        "height_cm": pi.get("height_cm"),
+        "weight_kg": pi.get("weight_kg"),
+        "blood_group": pi.get("blood_group"),
+        "relationship": pi.get("relationship", "self"),
+        "allergies": merged_allergies,
+        "current_medications": merged_meds,
+        "current_conditions": merged_conditions,
         "last_consultation": {
             "date": last.get("date") if last else None,
             "assessment": (last.get("extracted_data") or {}).get("assessment") if last else None,
@@ -3799,6 +3815,57 @@ async def finalize_consultation(session_id: str, user: User = Depends(get_curren
     await db.patients.update_one(
         {"id": session["patient_id"]},
         {"$push": {"consultations": consult_entry}, "$inc": {"consultation_count": 1}},
+    )
+
+    # Write back extracted facts to care_memory (longitudinal health record)
+    intake_summary = session.get("intake_summary") or {}
+    new_conditions = []
+    new_allergies = []
+    new_medications = []
+    # Extract from intake summary
+    for s in (intake_summary.get("associated_symptoms") or []):
+        if s and len(s) > 2:
+            new_conditions.append(str(s).strip())
+    # Extract from finalized prescription
+    for rx in rx_items:
+        if isinstance(rx, dict) and rx.get("medication"):
+            new_medications.append({
+                "name": rx.get("medication"),
+                "dose": rx.get("dose"),
+                "frequency": rx.get("frequency"),
+                "source": "consultation",
+                "date": _now_iso(),
+            })
+    # Extract from session facts if present
+    for fact in (session.get("facts") or []):
+        if isinstance(fact, dict):
+            ft = fact.get("type")
+            fv = fact.get("value")
+            if ft == "allergy" and fv:
+                new_allergies.append(str(fv).strip())
+            elif ft == "condition" and fv:
+                new_conditions.append(str(fv).strip())
+            elif ft == "medication" and fv:
+                new_medications.append({"name": str(fv).strip(), "source": "care_ai", "date": _now_iso()})
+    care_memory_update = {"care_memory.last_updated": _now_iso(), "care_memory.source": "care_ai"}
+    if new_allergies:
+        await db.patients.update_one(
+            {"id": session["patient_id"]},
+            {"$addToSet": {"care_memory.allergies": {"$each": new_allergies}}},
+        )
+    if new_conditions:
+        await db.patients.update_one(
+            {"id": session["patient_id"]},
+            {"$addToSet": {"care_memory.conditions": {"$each": new_conditions}}},
+        )
+    if new_medications:
+        await db.patients.update_one(
+            {"id": session["patient_id"]},
+            {"$push": {"care_memory.medications": {"$each": new_medications}}},
+        )
+    await db.patients.update_one(
+        {"id": session["patient_id"]},
+        {"$set": care_memory_update},
     )
 
     # Mark appointment completed
