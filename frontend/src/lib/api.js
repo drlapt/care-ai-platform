@@ -160,6 +160,17 @@ export const switchProfile = (id) => api.post(`/profiles/${id}/switch`).then((r)
 export const extractProfileFromText = (text, relationship) =>
   api.post("/profiles/ai-extract", { text, relationship }).then((r) => r.data);
 
+// Sprint 2.2 — Living Health Record
+export const getHealthRecord = (profileId) => api.get(`/profiles/${profileId}/health-record`).then((r) => r.data);
+export const addCondition = (profileId, payload) => api.post(`/profiles/${profileId}/conditions`, payload).then((r) => r.data);
+export const deleteCondition = (profileId, conditionId) => api.delete(`/profiles/${profileId}/conditions/${conditionId}`).then((r) => r.data);
+export const patchCondition = (profileId, conditionId, payload) => api.patch(`/profiles/${profileId}/conditions/${conditionId}`, payload).then((r) => r.data);
+export const addMedication = (profileId, payload) => api.post(`/profiles/${profileId}/medications`, payload).then((r) => r.data);
+export const deleteMedication = (profileId, medicationId) => api.delete(`/profiles/${profileId}/medications/${medicationId}`).then((r) => r.data);
+export const patchMedication = (profileId, medicationId, payload) => api.patch(`/profiles/${profileId}/medications/${medicationId}`, payload).then((r) => r.data);
+export const addAllergy = (profileId, payload) => api.post(`/profiles/${profileId}/allergies`, payload).then((r) => r.data);
+export const deleteAllergy = (profileId, allergyId) => api.delete(`/profiles/${profileId}/allergies/${allergyId}`).then((r) => r.data);
+
 // Phase 13 — Autonomous co-pilot + WhatsApp activity
 export const alertCopilot = (alert_id) => api.post(`/followup/alerts/${alert_id}/copilot`).then((r) => r.data);
 export const whatsappActivity = () => api.get("/whatsapp/activity").then((r) => r.data);
