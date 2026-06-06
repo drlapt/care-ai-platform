@@ -2125,10 +2125,13 @@ async def _build_patient_context(patient: Dict[str, Any]) -> str:
     merged_allergies = list({str(a) for a in (mh.get("allergies") or []) + (cm.get("allergies") or [])})
     merged_meds = list({str(m) for m in meds + [m.get("name") if isinstance(m, dict) else str(m) for m in (cm.get("medications") or [])]})
 
+    dob = pi.get("dob")
+    age = _derive_age_from_dob(dob) if dob else pi.get("age")
     ctx = {
         "patient_name": pi.get("name"),
-        "age": pi.get("age"),
-        "dob": pi.get("dob"),
+        "age": age,
+        "age_estimate_source": pi.get("age_estimate_source"),
+        "dob": dob,
         "gender": pi.get("gender"),
         "height_cm": pi.get("height_cm"),
         "weight_kg": pi.get("weight_kg"),
@@ -2563,26 +2566,41 @@ def _drug_allergy_collisions(meds: List[Dict[str, Any]], patient: Dict[str, Any]
 
 # ----- Profile / fact REST endpoints -----
 
+_VALID_BLOOD_GROUPS = {"A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"}
+_VALID_GENDERS = {"male", "female", "other"}
+
+
 class ProfileCreate(BaseModel):
     name: str
-    dob: Optional[str] = None          # ISO date YYYY-MM-DD; age derived from this
-    age: Optional[int] = None          # fallback when DOB unknown
+    dob: Optional[str] = None               # ISO date YYYY-MM-DD; age_estimate derived from this
+    age: Optional[int] = None               # fallback when DOB unknown → stored as age_estimate
+    age_estimate_source: Optional[str] = None  # "patient_reported" | "derived_from_dob"
     gender: Optional[str] = None
-    relationship: Optional[str] = "family"  # self | mother | father | spouse | child | sibling | family | guest
+    relationship: Optional[str] = "family"
     height_cm: Optional[float] = None
     weight_kg: Optional[float] = None
     blood_group: Optional[str] = None
+    # Clinical data collected during conversational onboarding
+    conditions: Optional[List[str]] = None
+    medications: Optional[List[str]] = None
+    allergies: Optional[List[str]] = None
 
 
 class ProfilePatch(BaseModel):
     name: Optional[str] = None
     dob: Optional[str] = None
     age: Optional[int] = None
+    age_estimate_source: Optional[str] = None
     gender: Optional[str] = None
     relationship: Optional[str] = None
     height_cm: Optional[float] = None
     weight_kg: Optional[float] = None
     blood_group: Optional[str] = None
+
+
+class ProfileAIExtractRequest(BaseModel):
+    text: str
+    relationship: Optional[str] = None
 
 
 class FactConfirmBody(BaseModel):
@@ -2634,6 +2652,134 @@ def _profile_summary(p: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+_AI_EXTRACT_SYSTEM = """You are CARE AI — a medical intake assistant creating patient profiles from natural language.
+
+Your ONLY job: extract explicitly stated information. Return structured JSON.
+
+MANDATORY RULES:
+1. Extract ONLY what is explicitly stated — never infer, never guess, never assume
+2. Relationship NEVER implies gender: "Mother" does NOT mean Female; "Father" does NOT mean Male
+3. Never invent: conditions, medications, allergies, gender, blood group, DOB
+4. DOB is the source of truth — if DOB is stated, derive age from it
+5. If only age is stated (no DOB): store as age_estimate with age_estimate_source="patient_reported"
+6. blood_group MUST be exactly one of: A+, A-, B+, B-, AB+, AB-, O+, O- — or null
+7. gender MUST be exactly one of: male, female, other — or null (not inferred from relationship)
+8. conditions/medications/allergies: ONLY include explicitly named ones
+9. height: extract only if explicitly stated in cm or feet/inches (convert to cm)
+10. weight: extract only if explicitly stated in kg or lbs (convert to kg)
+
+confidence scores (0.0-1.0): reflect how clearly the value was stated
+  1.0 = explicitly and unambiguously stated
+  0.7 = clearly stated but with minor ambiguity
+  0.4 = implied but not explicit
+  0.0 = not mentioned
+
+Return ONLY valid JSON matching this exact structure — no markdown, no explanation:
+{
+  "extracted": {
+    "name": null,
+    "relationship": null,
+    "dob": null,
+    "age_estimate": null,
+    "age_estimate_source": "patient_reported",
+    "gender": null,
+    "height_cm": null,
+    "weight_kg": null,
+    "blood_group": null,
+    "conditions": [],
+    "medications": [],
+    "allergies": []
+  },
+  "confidence": {
+    "name": 0.0,
+    "age_estimate": 0.0,
+    "gender": 0.0,
+    "height_cm": 0.0,
+    "weight_kg": 0.0,
+    "blood_group": 0.0
+  }
+}"""
+
+
+@api_router.post("/profiles/ai-extract")
+async def ai_extract_profile(payload: ProfileAIExtractRequest, user: User = Depends(get_current_user)):
+    """Extract structured profile data from natural language text.
+    On AI failure, returns fallback=True with empty fields — never blocks profile creation.
+    """
+    user_prompt = f"Relationship context provided by user: {payload.relationship or 'not specified'}\n\nPatient description to extract from:\n{payload.text}"
+    try:
+        response = await openai_client.chat.completions.create(
+            model="gpt-4o",
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": _AI_EXTRACT_SYSTEM},
+                {"role": "user", "content": user_prompt},
+            ],
+            max_tokens=800,
+            temperature=0.1,
+        )
+        content = response.choices[0].message.content or "{}"
+        result = json.loads(content)
+        ext = result.get("extracted") or {}
+
+        # Normalise and validate
+        gender_raw = (ext.get("gender") or "").lower().strip()
+        ext["gender"] = gender_raw if gender_raw in _VALID_GENDERS else None
+
+        bg_raw = (ext.get("blood_group") or "").strip().upper()
+        ext["blood_group"] = bg_raw if bg_raw in _VALID_BLOOD_GROUPS else None
+
+        # DOB derivation takes priority over stated age
+        dob = ext.get("dob")
+        if dob:
+            derived = _derive_age_from_dob(dob)
+            if derived is not None:
+                ext["age_estimate"] = derived
+                ext["age_estimate_source"] = "derived_from_dob"
+        elif ext.get("age_estimate") is not None:
+            ext["age_estimate_source"] = "patient_reported"
+
+        # Clean lists
+        ext["conditions"] = [c for c in (ext.get("conditions") or []) if c and isinstance(c, str)]
+        ext["medications"] = [m for m in (ext.get("medications") or []) if m and isinstance(m, str)]
+        ext["allergies"] = [a for a in (ext.get("allergies") or []) if a and isinstance(a, str)]
+
+        missing_required = []
+        if not ext.get("name"):
+            missing_required.append("name")
+        if not ext.get("age_estimate") and not ext.get("dob"):
+            missing_required.append("age")
+
+        missing_optional = []
+        for field, label in [("gender", "gender"), ("dob", "date of birth"), ("height_cm", "height"), ("weight_kg", "weight"), ("blood_group", "blood group")]:
+            if not ext.get(field):
+                missing_optional.append(label)
+
+        return {
+            "extracted": ext,
+            "confidence": result.get("confidence") or {},
+            "missing_required": missing_required,
+            "missing_optional": missing_optional,
+            "raw_transcript": payload.text,
+            "fallback": False,
+        }
+    except Exception as e:
+        logger.warning(f"ai_extract_profile failed: {e}")
+        return {
+            "extracted": {
+                "name": None, "relationship": payload.relationship, "dob": None,
+                "age_estimate": None, "age_estimate_source": "patient_reported",
+                "gender": None, "height_cm": None, "weight_kg": None,
+                "blood_group": None, "conditions": [], "medications": [], "allergies": [],
+            },
+            "confidence": {"name": 0.0, "age_estimate": 0.0, "gender": 0.0, "height_cm": 0.0, "weight_kg": 0.0, "blood_group": 0.0},
+            "missing_required": ["name", "age"],
+            "missing_optional": ["gender", "date of birth", "height", "weight", "blood group"],
+            "raw_transcript": payload.text,
+            "fallback": True,
+        }
+
+
 @api_router.get("/profiles")
 async def list_profiles(user: User = Depends(get_current_user)):
     """All profiles owned by the current user (max 5). The user's
@@ -2662,19 +2808,32 @@ async def create_profile(payload: ProfileCreate, user: User = Depends(get_curren
 
     dob = payload.dob
     age = _derive_age_from_dob(dob) if dob else payload.age
+    age_estimate_source = "derived_from_dob" if dob else (payload.age_estimate_source or ("patient_reported" if payload.age else None))
     bmi = _calc_bmi(payload.height_cm, payload.weight_kg)
+
+    # Normalize gender/blood_group
+    gender_raw = (payload.gender or "").lower().strip()
+    gender = gender_raw if gender_raw in _VALID_GENDERS else None
+    bg_raw = (payload.blood_group or "").strip().upper()
+    blood_group = bg_raw if bg_raw in _VALID_BLOOD_GROUPS else None
 
     pi = {
         "name": payload.name.strip(),
         "dob": dob,
         "age": age,
-        "gender": payload.gender,
+        "age_estimate_source": age_estimate_source,
+        "gender": gender,
         "height_cm": payload.height_cm,
         "weight_kg": payload.weight_kg,
         "bmi": bmi,
-        "blood_group": payload.blood_group,
+        "blood_group": blood_group,
     }
-    mh: Dict[str, Any] = {"allergies": [], "current_medications": [], "current_conditions": []}
+    # Clinical data from conversational onboarding
+    mh: Dict[str, Any] = {
+        "allergies": [a for a in (payload.allergies or []) if a],
+        "current_medications": [m for m in (payload.medications or []) if m],
+        "current_conditions": [c for c in (payload.conditions or []) if c],
+    }
     completeness = _calc_profile_completeness(pi, mh)
 
     doc = {
@@ -2710,16 +2869,20 @@ async def patch_profile(profile_id: str, payload: ProfilePatch, user: User = Dep
     if payload.dob is not None:
         pi["dob"] = payload.dob
         pi["age"] = _derive_age_from_dob(payload.dob)
+        pi["age_estimate_source"] = "derived_from_dob"
     elif payload.age is not None:
         pi["age"] = payload.age
+        pi["age_estimate_source"] = payload.age_estimate_source or "patient_reported"
     if payload.gender is not None:
-        pi["gender"] = payload.gender
+        gender_raw = payload.gender.lower().strip()
+        pi["gender"] = gender_raw if gender_raw in _VALID_GENDERS else None
     if payload.height_cm is not None:
         pi["height_cm"] = payload.height_cm
     if payload.weight_kg is not None:
         pi["weight_kg"] = payload.weight_kg
     if payload.blood_group is not None:
-        pi["blood_group"] = payload.blood_group
+        bg_raw = payload.blood_group.strip().upper()
+        pi["blood_group"] = bg_raw if bg_raw in _VALID_BLOOD_GROUPS else None
 
     # Recalculate BMI whenever height or weight is present (from patch or existing data)
     pi["bmi"] = _calc_bmi(pi.get("height_cm"), pi.get("weight_kg"))
