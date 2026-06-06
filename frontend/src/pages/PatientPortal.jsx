@@ -202,9 +202,9 @@ export default function PatientPortal() {
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
           {profiles.map((p) => {
             const sel = p.id === user?.linked_patient_id;
-            const idOk = !!(p.name && (p.dob || p.age) && p.gender);
+            const idOk = !!(p.name && (p.dob || p.age != null) && p.gender);
             const vitalsOk = !!(p.height_cm && p.weight_kg);
-            const hrOk = !!(p.conditions?.length || p.medications?.length || p.allergies?.length);
+            const hrOk = !!p.has_health_record;
             return (
               <div
                 key={p.id}

@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
-import { X, Save, Loader2, User, Ruler, Weight, Droplets, Calendar } from "lucide-react";
+import { X, Save, Loader2, User, Ruler, Weight, Droplets, Calendar, Check } from "lucide-react";
 import { updateProfile } from "@/lib/api";
 
 const BLOOD_GROUPS = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"];
@@ -37,18 +37,36 @@ function bmiCategory(bmi) {
   return { label: "Obese", color: "#E85A5A" };
 }
 
-function CompletenessBar({ score }) {
-  const pct = Math.min(100, Math.max(0, score || 0));
-  const color = pct >= 80 ? "#3CC97C" : pct >= 50 ? "#F2994A" : "#E85A5A";
+function CompletenessStatus({ form, profile }) {
+  const idOk = !!(form.name.trim() && (form.dob || profile?.age != null) && form.gender);
+  const vitalsOk = !!(form.height_cm && form.weight_kg);
+  const mh = profile?.medical_history || {};
+  const healthOk = !!(
+    mh.current_conditions?.length || mh.current_medications?.length ||
+    mh.medications?.length || mh.allergies?.length || profile?.has_health_record
+  );
+  const StatusLine = ({ done, label, note }) => (
+    <div className="flex items-center gap-2 text-[13px]">
+      <div
+        className="w-5 h-5 rounded-full flex items-center justify-center shrink-0"
+        style={{ background: done ? "rgba(60,201,124,0.15)" : "rgba(91,124,250,0.1)" }}
+      >
+        {done
+          ? <Check size={10} style={{ color: "#3CC97C" }} />
+          : <div className="w-2 h-2 rounded-full" style={{ background: "rgba(91,124,250,0.3)" }} />
+        }
+      </div>
+      <span style={{ color: done ? "#28A55B" : "#6B7595" }}>
+        {done ? `✓ ${label} complete` : `○ ${note || label + " incomplete"}`}
+      </span>
+    </div>
+  );
   return (
-    <div className="flex flex-col gap-1">
-      <div className="flex items-center justify-between text-[12px]">
-        <span style={{ color: "#6B7595" }}>Profile completeness</span>
-        <span className="font-bold" style={{ color }}>{pct}%</span>
-      </div>
-      <div className="h-2 rounded-full bg-[#5B7CFA]/10 overflow-hidden">
-        <div className="h-full rounded-full transition-all duration-500" style={{ width: `${pct}%`, background: color }} />
-      </div>
+    <div className="glass-soft px-4 py-3 flex flex-col gap-2 rounded-2xl" data-testid="completeness-status">
+      <div className="text-[10.5px] font-bold uppercase tracking-wider mb-0.5" style={{ color: "#9AA3BD" }}>Profile status</div>
+      <StatusLine done={idOk} label="Identity" note="Name, age, and gender needed" />
+      <StatusLine done={vitalsOk} label="Vitals" note="Height and weight needed" />
+      <StatusLine done={healthOk} label="Health record" note="Health record can be expanded later" />
     </div>
   );
 }
@@ -64,27 +82,9 @@ export default function ProfileEditModal({ profile, onClose, onSaved }) {
     blood_group: profile?.blood_group || "",
   });
   const [saving, setSaving] = useState(false);
-  const [previewCompleteness, setPreviewCompleteness] = useState(profile?.profile_completeness || 0);
 
   const bmi = calcBmi(form.height_cm, form.weight_kg);
   const bmiCat = bmiCategory(bmi);
-
-  // Live completeness preview
-  useEffect(() => {
-    let score = 0;
-    if (form.name.trim()) score += 20;
-    if (form.dob) score += 15;
-    else if (profile?.age != null) score += 15; // age already stored
-    if (form.gender) score += 10;
-    if (form.height_cm && form.weight_kg) score += 15;
-    if (form.blood_group) score += 10;
-    // Clinical data from existing profile
-    const mh = profile?.medical_history || {};
-    if (mh.current_conditions?.length || mh.allergies?.length) score += 10;
-    if (mh.current_medications?.length || mh.medications?.length) score += 10;
-    if (mh.allergies?.length) score += 10;
-    setPreviewCompleteness(Math.min(score, 100));
-  }, [form, profile]);
 
   const set = (k) => (e) => setForm((s) => ({ ...s, [k]: e.target?.value ?? e }));
 
@@ -104,7 +104,7 @@ export default function ProfileEditModal({ profile, onClose, onSaved }) {
       };
       const result = await updateProfile(profile.id, payload);
       toast.success("Profile updated");
-      onSaved?.({ ...profile, ...payload, bmi: bmi ? parseFloat(bmi) : profile?.bmi, profile_completeness: result?.profile_completeness ?? previewCompleteness });
+      onSaved?.({ ...profile, ...payload, bmi: bmi ? parseFloat(bmi) : profile?.bmi, profile_completeness: result?.profile_completeness ?? profile?.profile_completeness });
       onClose();
     } catch (err) {
       toast.error(err?.response?.data?.detail || "Could not save profile");
@@ -142,8 +142,8 @@ export default function ProfileEditModal({ profile, onClose, onSaved }) {
           </button>
         </div>
 
-        {/* Completeness bar */}
-        <CompletenessBar score={previewCompleteness} />
+        {/* Completeness status */}
+        <CompletenessStatus form={form} profile={profile} />
 
         {/* Identity */}
         <fieldset className="flex flex-col gap-3">

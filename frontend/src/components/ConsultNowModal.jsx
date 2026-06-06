@@ -4,6 +4,27 @@ import { toast } from "sonner";
 import { X, Calendar, Stethoscope, Send, ChevronRight, ChevronLeft, Award, Star, Loader2, CheckCircle2, AlertTriangle, Plus, UserPlus } from "lucide-react";
 import { createAppointment, listDoctors, doctorAvailability, listProfiles } from "@/lib/api";
 
+function ProfileCategoryDots({ profile }) {
+  const idOk = !!(profile.name && (profile.dob || profile.age != null) && profile.gender);
+  const vitalsOk = !!(profile.height_cm && profile.weight_kg);
+  const healthOk = !!profile.has_health_record;
+  const labels = [
+    { key: "Identity", ok: idOk },
+    { key: "Vitals", ok: vitalsOk },
+    { key: "Health", ok: healthOk },
+  ];
+  return (
+    <div className="flex items-center gap-2 mt-1" data-testid="profile-category-dots">
+      {labels.map(({ key, ok }) => (
+        <div key={key} className="flex items-center gap-0.5">
+          <div className="w-2 h-2 rounded-full shrink-0" style={{ background: ok ? "#3CC97C" : "rgba(91,124,250,0.2)" }} />
+          <span className="text-[9.5px] font-semibold" style={{ color: ok ? "#3CC97C" : "#9AA3BD" }}>{key}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function todayISO() {
   const d = new Date();
   const tz = d.getTimezoneOffset() * 60000;
@@ -159,6 +180,10 @@ export default function ConsultNowModal({ onClose, onBooked }) {
         </div>
 
         {/* STEP 0: Profile selection */}
+        {/* TODO Sprint 2.3 UX:
+            Remove double profile selection.
+            Dashboard active profile should automatically populate booking.
+            User should select profile only once. */}
         {step === 0 && (
           <div className="flex flex-col gap-3" data-testid="step-profile">
             <div className="font-semibold text-[15px]" style={{ color: "#0F1836" }}>Who is this consultation for?</div>
@@ -187,8 +212,6 @@ export default function ConsultNowModal({ onClose, onBooked }) {
                 {profiles.map((p) => {
                   const color = REL_COLOR[p.relationship] || "#5B7CFA";
                   const sel = p.id === selectedPatientId;
-                  const pct = p.profile_completeness || 0;
-                  const pctColor = pct >= 80 ? "#3CC97C" : pct >= 50 ? "#F2994A" : "#E85A5A";
                   return (
                     <button
                       key={p.id}
@@ -205,13 +228,7 @@ export default function ConsultNowModal({ onClose, onBooked }) {
                           {p.age ? <span>· {p.age}y</span> : null}
                           {p.bmi ? <span>· BMI {p.bmi}</span> : null}
                         </div>
-                        {/* Completeness mini-bar */}
-                        <div className="flex items-center gap-1.5 mt-1">
-                          <div className="flex-1 h-1 rounded-full overflow-hidden" style={{ background: "rgba(91,124,250,0.12)" }}>
-                            <div className="h-full rounded-full" style={{ width: `${pct}%`, background: pctColor }} />
-                          </div>
-                          <span className="text-[9.5px] font-bold" style={{ color: pctColor }}>{pct}%</span>
-                        </div>
+                        <ProfileCategoryDots profile={p} />
                       </div>
                       {sel && <div className="w-4 h-4 rounded-full bg-[#5B7CFA] flex items-center justify-center"><div className="w-2 h-2 rounded-full bg-white" /></div>}
                     </button>

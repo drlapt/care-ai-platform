@@ -1,6 +1,24 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Users, Plus, ChevronDown, Check, X, Loader2, UserPlus, User as UserIcon } from "lucide-react";
+
+function ProfileCategoryDots({ profile }) {
+  const idOk = !!(profile.name && (profile.dob || profile.age != null) && profile.gender);
+  const vitalsOk = !!(profile.height_cm && profile.weight_kg);
+  const healthOk = !!profile.has_health_record;
+  const dot = (ok) => (
+    <div
+      className="w-2 h-2 rounded-full shrink-0"
+      style={{ background: ok ? "#3CC97C" : "rgba(91,124,250,0.2)" }}
+    />
+  );
+  return (
+    <div className="flex items-center gap-1 mt-1" title={`Identity: ${idOk ? "✓" : "○"} · Vitals: ${vitalsOk ? "✓" : "○"} · Health: ${healthOk ? "✓" : "○"}`}>
+      {dot(idOk)}{dot(vitalsOk)}{dot(healthOk)}
+      <span className="text-[9px]" style={{ color: "#9AA3BD" }}>I · V · H</span>
+    </div>
+  );
+}
 import { listProfiles, createProfile, switchProfile } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 
@@ -144,8 +162,6 @@ export default function ProfileSwitcher() {
             {!adding && profiles.map((p) => {
               const c = REL_COLOR[p.relationship] || "#5B7CFA";
               const sel = p.id === activeId;
-              const pct = p.profile_completeness || 0;
-              const pctColor = pct >= 80 ? "#3CC97C" : pct >= 50 ? "#F2994A" : "#E85A5A";
               return (
                 <button
                   key={p.id}
@@ -170,10 +186,7 @@ export default function ProfileSwitcher() {
                       {p.bmi ? ` · BMI ${p.bmi}` : ""}
                       {p.consultation_count ? ` · ${p.consultation_count} visit${p.consultation_count === 1 ? "" : "s"}` : ""}
                     </div>
-                    {/* Completeness micro-bar */}
-                    <div className="h-0.5 rounded-full mt-1 overflow-hidden" style={{ background: "rgba(91,124,250,0.12)" }}>
-                      <div className="h-full rounded-full" style={{ width: `${pct}%`, background: pctColor }} />
-                    </div>
+                    <ProfileCategoryDots profile={p} />
                   </div>
                   {sel && <Check size={14} style={{ color: c }} />}
                   {busy === p.id && <Loader2 size={14} className="animate-spin" style={{ color: c }} />}
