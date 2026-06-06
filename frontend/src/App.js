@@ -17,6 +17,7 @@ import Analytics from "@/pages/Analytics";
 import Templates from "@/pages/Templates";
 import PatientPortal from "@/pages/PatientPortal";
 import ProfileCreate from "@/pages/ProfileCreate";
+import HealthRecord from "@/pages/HealthRecord";
 import FollowupChat from "@/pages/FollowupChat";
 import Reminders from "@/pages/Reminders";
 import Alerts from "@/pages/Alerts";
@@ -69,6 +70,7 @@ function AppRoutes() {
         <Route path="/templates" element={<ProtectedRoute roles={["doctor", "admin"]}><Templates /></ProtectedRoute>} />
         <Route path="/portal" element={<PatientPortal />} />
         <Route path="/profiles/new" element={<ProfileCreate />} />
+        <Route path="/profiles/:profileId/health-record" element={<HealthRecord />} />
         <Route path="/followup" element={<FollowupChat />} />
         <Route path="/followup/:patientId" element={<FollowupChat />} />
         <Route path="/reminders" element={<Reminders />} />
